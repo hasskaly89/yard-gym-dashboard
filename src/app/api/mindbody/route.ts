@@ -6,6 +6,27 @@ const API_KEY = process.env.MINDBODY_API_KEY ?? '';
 const USERNAME = process.env.MINDBODY_USERNAME ?? '';
 const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 
+// Mock data used until MindBody approves API access
+const MOCK_DATA = {
+  mock: true,
+  clients: {
+    TotalResults: 248,
+    Clients: [],
+  },
+  classes: {
+    Classes: [
+      { Id: 1, ClassDescription: { Name: 'CrossFit' }, StartDateTime: new Date().toISOString(), TotalBooked: 14, MaxCapacity: 20, Staff: { Name: 'Jake Morley' } },
+      { Id: 2, ClassDescription: { Name: 'Boxing' }, StartDateTime: new Date().toISOString(), TotalBooked: 8, MaxCapacity: 15, Staff: { Name: 'Sara Hill' } },
+      { Id: 3, ClassDescription: { Name: 'Yoga Flow' }, StartDateTime: new Date().toISOString(), TotalBooked: 12, MaxCapacity: 12, Staff: { Name: 'Mia Chen' } },
+      { Id: 4, ClassDescription: { Name: 'HIIT' }, StartDateTime: new Date().toISOString(), TotalBooked: 10, MaxCapacity: 18, Staff: { Name: 'Jake Morley' } },
+    ],
+  },
+  visits: {
+    TotalResults: 312,
+    ClientVisits: [],
+  },
+};
+
 async function getStaffToken(): Promise<string> {
   const res = await fetch(`${MB_BASE}/usertoken/issue`, {
     method: 'POST',
@@ -14,10 +35,7 @@ async function getStaffToken(): Promise<string> {
       'API-Key': API_KEY,
       'SiteId': SITE_ID,
     },
-    body: JSON.stringify({
-      Username: USERNAME,
-      Password: PASSWORD,
-    }),
+    body: JSON.stringify({ Username: USERNAME, Password: PASSWORD }),
   });
 
   if (!res.ok) {
@@ -42,11 +60,12 @@ async function mbFetch(path: string, token: string) {
 }
 
 export async function GET() {
-  try {
-    if (!API_KEY) {
-      return NextResponse.json({ error: 'MINDBODY_API_KEY not set' }, { status: 500 });
-    }
+  // Fall back to mock data if no API key set
+  if (!API_KEY) {
+    return NextResponse.json(MOCK_DATA);
+  }
 
+  try {
     const token = await getStaffToken();
 
     const today = new Date().toISOString().split('T')[0];
@@ -59,12 +78,13 @@ export async function GET() {
     ]);
 
     return NextResponse.json({
+      mock: false,
       clients: clientsData.status === 'fulfilled' ? clientsData.value : null,
       classes: classesData.status === 'fulfilled' ? classesData.value : null,
       visits: visitsData.status === 'fulfilled' ? visitsData.value : null,
     });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch {
+    // API not approved yet — return mock data with a flag
+    return NextResponse.json({ ...MOCK_DATA, apiPending: true });
   }
 }

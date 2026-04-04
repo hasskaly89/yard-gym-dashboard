@@ -23,6 +23,8 @@ interface MBData {
   clients: { Clients: MBClient[]; TotalResults: number } | null;
   classes: { Classes: MBClass[] } | null;
   visits: { ClientVisits: unknown[]; TotalResults: number } | null;
+  mock?: boolean;
+  apiPending?: boolean;
   error?: string;
 }
 
@@ -64,25 +66,38 @@ export default function MindBodyPage() {
           <p className="text-gym-muted text-sm mt-1">Live member & class data</p>
         </div>
         <span className={`text-xs px-3 py-1 rounded-full font-medium ${
-          error ? 'bg-red-500/10 text-red-400' :
           loading ? 'bg-yellow-500/10 text-yellow-400' :
+          data?.apiPending ? 'bg-yellow-500/10 text-yellow-400' :
+          data?.mock ? 'bg-blue-500/10 text-blue-400' :
           'bg-green-500/10 text-green-400'
         }`}>
-          {error ? 'Disconnected' : loading ? 'Connecting…' : 'Live'}
+          {loading ? 'Connecting…' : data?.apiPending ? 'Approval Pending' : data?.mock ? 'Sample Data' : 'Live'}
         </span>
       </div>
 
-      {/* Error state */}
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 mb-6">
-          <p className="text-red-400 font-semibold mb-1">Connection Error</p>
-          <p className="text-red-300 text-sm">{error}</p>
-          {error.includes('MINDBODY_API_KEY') && (
-            <p className="text-gym-muted text-sm mt-3">
-              Add your API key to <code className="bg-gym-border px-1 rounded">.env.local</code> as{' '}
-              <code className="bg-gym-border px-1 rounded">MINDBODY_API_KEY</code>, then redeploy.
+      {/* API pending approval notice */}
+      {data?.apiPending && (
+        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-6 flex items-start gap-3">
+          <span className="text-yellow-400 text-lg">⏳</span>
+          <div>
+            <p className="text-yellow-400 font-semibold text-sm">MindBody API Approval Pending</p>
+            <p className="text-gym-muted text-xs mt-0.5">
+              Your developer account is awaiting MindBody approval. Showing sample data for now — this will update automatically once approved.
             </p>
-          )}
+          </div>
+        </div>
+      )}
+
+      {/* Mock data notice */}
+      {data?.mock && !data?.apiPending && (
+        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mb-6 flex items-start gap-3">
+          <span className="text-blue-400 text-lg">ℹ️</span>
+          <div>
+            <p className="text-blue-400 font-semibold text-sm">Sample Data</p>
+            <p className="text-gym-muted text-xs mt-0.5">
+              Add your MindBody API key to see live gym data.
+            </p>
+          </div>
         </div>
       )}
 
@@ -154,10 +169,9 @@ export default function MindBodyPage() {
         )}
       </div>
 
-      {/* Setup notice if no API key */}
-      {!loading && !error && (
+      {!loading && !data?.mock && (
         <p className="text-gym-muted text-xs text-center">
-          Sandbox data from MindBody Site ID: -99 — swap in your production API key to see live gym data.
+          Live data from MindBody Site ID: {process.env.NEXT_PUBLIC_MINDBODY_SITE_ID ?? '-99'}
         </p>
       )}
     </div>

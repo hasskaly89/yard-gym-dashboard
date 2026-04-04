@@ -4,6 +4,9 @@ const API_KEY = process.env.GHL_API_KEY ?? '';
 const LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
 const V1 = 'https://rest.gohighlevel.com/v1';
 
+// Known pipeline IDs from previous debug
+const PIPELINE_IDS = ['WxbBGLZQpAsWZweNJ73r', 'NZ7SCFBBmReBhwp2zngJ', 'Smo2vvB14O92YbIRpprh', 'rcdbmUAqdgDTCC0ObhF6'];
+
 async function tryFetch(label: string, url: string) {
   try {
     const res = await fetch(url, {
@@ -12,7 +15,7 @@ async function tryFetch(label: string, url: string) {
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch { data = text; }
-    return { label, status: res.status, ok: res.ok, data };
+    return { label, status: res.status, ok: res.ok, keys: data && typeof data === 'object' ? Object.keys(data) : [], sample: data };
   } catch (e) {
     return { label, error: String(e) };
   }
@@ -20,13 +23,12 @@ async function tryFetch(label: string, url: string) {
 
 export async function GET() {
   const results = await Promise.all([
-    tryFetch('contacts', `${V1}/contacts/?locationId=${LOCATION_ID}&limit=3`),
-    tryFetch('conversations-search', `${V1}/conversations/search?locationId=${LOCATION_ID}&limit=5`),
-    tryFetch('conversations-list', `${V1}/conversations/?locationId=${LOCATION_ID}&limit=5`),
-    tryFetch('conversations-unread', `${V1}/conversations/?locationId=${LOCATION_ID}&status=unread&limit=5`),
-    tryFetch('pipelines', `${V1}/pipelines/?locationId=${LOCATION_ID}`),
-    tryFetch('opportunities', `${V1}/opportunities/?locationId=${LOCATION_ID}&limit=5`),
-    tryFetch('opportunities-search', `${V1}/opportunities/search?locationId=${LOCATION_ID}&limit=5`),
+    // Try opportunities with pipeline ID
+    tryFetch('opps-pipeline-1', `${V1}/opportunities/search?pipelineId=${PIPELINE_IDS[0]}&locationId=${LOCATION_ID}&limit=3`),
+    tryFetch('opps-pipeline-2', `${V1}/opportunities/search?pipelineId=${PIPELINE_IDS[2]}&locationId=${LOCATION_ID}&limit=3`),
+    // Try conversations with different params
+    tryFetch('convs-assigned', `${V1}/conversations/search?locationId=${LOCATION_ID}&assignedTo=&limit=5`),
+    tryFetch('convs-q', `${V1}/conversations/search?locationId=${LOCATION_ID}&q=&limit=5`),
   ]);
-  return NextResponse.json({ locationId: LOCATION_ID, results });
+  return NextResponse.json({ results });
 }

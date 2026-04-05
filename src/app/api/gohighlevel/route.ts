@@ -77,36 +77,51 @@ export async function GET() {
   if (PRIVATE_TOKEN) {
     try {
       const convData = await v2Fetch(
-        `/conversations/search?locationId=${LOCATION_ID}&unreadOnly=true&limit=20&sortBy=lastMessageDate&sortOrder=desc`
+        `/conversations/search?locationId=${LOCATION_ID}&status=unread&limit=20`
       );
       const rawConvs = convData.conversations ?? [];
-      conversations = rawConvs.map((c: {
-        id: string;
-        contactName?: string;
-        fullName?: string;
-        lastMessage?: string;
-        lastMessageBody?: string;
-        lastMessageDate?: string;
-        unreadCount?: number;
-        type?: string;
-        channel?: string;
-      }) => ({
-        id: c.id,
-        contactName: c.contactName ?? c.fullName ?? 'Unknown',
-        lastMessage: c.lastMessage ?? c.lastMessageBody ?? '',
-        lastMessageDate: c.lastMessageDate ?? new Date().toISOString(),
-        unreadCount: c.unreadCount ?? 1,
-        channel: c.type ?? c.channel ?? 'SMS',
-      }));
+
+      const channelMap: Record<string, string> = {
+        TYPE_INSTAGRAM: 'Instagram',
+        TYPE_SMS: 'SMS',
+        TYPE_EMAIL: 'Email',
+        TYPE_FB_MESSENGER: 'Facebook',
+        TYPE_WHATSAPP: 'WhatsApp',
+        TYPE_PHONE: 'Phone',
+      };
+
+      conversations = rawConvs
+        .filter((c: { unreadCount?: number }) => (c.unreadCount ?? 0) > 0)
+        .map((c: {
+          id: string;
+          contactName?: string;
+          fullName?: string;
+          lastMessageBody?: string;
+          lastMessageDate?: number;
+          unreadCount?: number;
+          lastMessageType?: string;
+        }) => ({
+          id: c.id,
+          contactName: c.contactName ?? c.fullName ?? 'Unknown',
+          lastMessage: c.lastMessageBody ?? '',
+          lastMessageDate: c.lastMessageDate
+            ? new Date(c.lastMessageDate).toISOString()
+            : new Date().toISOString(),
+          unreadCount: c.unreadCount ?? 1,
+          channel: channelMap[c.lastMessageType ?? ''] ?? 'SMS',
+        }));
     } catch {
       conversations = [];
     }
   }
 
+  const totalUnread = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
+
   return NextResponse.json({
     mock: false,
     apiPending: false,
     conversations,
+    totalUnread,
     contacts,
     opportunities: { total: totalOpps, stages },
   });

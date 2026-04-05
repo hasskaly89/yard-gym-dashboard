@@ -20,6 +20,7 @@ interface GHLData {
   mock?: boolean;
   apiPending?: boolean;
   conversations: Conversation[];
+  totalUnread?: number;
   contacts: { total: number; newThisWeek: number };
   opportunities: { total: number; stages: Stage[] };
 }
@@ -62,7 +63,7 @@ export default function GoHighLevelPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const totalUnread = data?.conversations.reduce((sum, c) => sum + c.unreadCount, 0) ?? 0;
+  const totalUnread = data?.totalUnread ?? data?.conversations.reduce((sum, c) => sum + c.unreadCount, 0) ?? 0;
 
   return (
     <div className="p-8">

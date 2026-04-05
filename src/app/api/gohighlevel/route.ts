@@ -1,30 +1,39 @@
 import { NextResponse } from 'next/server';
 
 const V1 = 'https://rest.gohighlevel.com/v1';
+const V2 = 'https://services.leadconnectorhq.com';
 const API_KEY = process.env.GHL_API_KEY ?? '';
+const PRIVATE_TOKEN = process.env.GHL_PRIVATE_TOKEN ?? '';
 const LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
-
-const MOCK_CONVERSATIONS = [
-  { id: '1', contactName: 'James Fletcher', lastMessage: 'Hey, what are the membership prices?', lastMessageDate: new Date(Date.now() - 5 * 60 * 1000).toISOString(), unreadCount: 2, channel: 'SMS' },
-  { id: '2', contactName: 'Priya Sharma', lastMessage: 'Can I book a personal training session?', lastMessageDate: new Date(Date.now() - 22 * 60 * 1000).toISOString(), unreadCount: 1, channel: 'Email' },
-  { id: '3', contactName: 'Tom Wu', lastMessage: 'Is the gym open on public holidays?', lastMessageDate: new Date(Date.now() - 45 * 60 * 1000).toISOString(), unreadCount: 3, channel: 'SMS' },
-  { id: '4', contactName: 'Lena Kovac', lastMessage: 'Just signed up! When can I start?', lastMessageDate: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), unreadCount: 1, channel: 'Instagram' },
-  { id: '5', contactName: 'Marcus Daly', lastMessage: 'Do you offer student discounts?', lastMessageDate: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), unreadCount: 1, channel: 'Facebook' },
-];
 
 async function v1Fetch(path: string) {
   const res = await fetch(`${V1}${path}`, {
     headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+    cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`${res.status}`);
+  if (!res.ok) throw new Error(`v1 ${res.status}`);
+  return res.json();
+}
+
+async function v2Fetch(path: string) {
+  const res = await fetch(`${V2}${path}`, {
+    headers: {
+      Authorization: `Bearer ${PRIVATE_TOKEN}`,
+      'Content-Type': 'application/json',
+      Version: '2021-07-28',
+    },
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`v2 ${res.status}`);
   return res.json();
 }
 
 export async function GET() {
   if (!API_KEY || !LOCATION_ID) {
-    return NextResponse.json({ mock: true, conversations: MOCK_CONVERSATIONS, contacts: { total: 1842 }, opportunities: { total: 47, stages: [] } });
+    return NextResponse.json({ mock: true });
   }
 
+  // Fetch contacts & pipelines via v1 (known working)
   const [contactsData, pipelinesData] = await Promise.allSettled([
     v1Fetch(`/contacts/?locationId=${LOCATION_ID}&limit=1`),
     v1Fetch(`/pipelines/?locationId=${LOCATION_ID}`),
@@ -34,34 +43,70 @@ export async function GET() {
     ? { total: contactsData.value.meta?.total ?? 0 }
     : { total: 0 };
 
-  // Build pipeline stages from real pipeline data
   type Stage = { id: string; name: string };
   type Pipeline = { id: string; name: string; stages: Stage[] };
   const pipelines: Pipeline[] = pipelinesData.status === 'fulfilled'
     ? (pipelinesData.value.pipelines ?? [])
     : [];
 
-  // Try to get opportunity counts per pipeline
+  // Fetch opportunity counts per pipeline via v1
   const oppResults = await Promise.allSettled(
     pipelines.slice(0, 4).map(p =>
-      v1Fetch(`/opportunities/search?pipelineId=${p.id}&locationId=${LOCATION_ID}&limit=100`)
-        .then(d => ({ pipelineId: p.id, name: p.name, total: d.meta?.total ?? (d.opportunities?.length ?? 0) }))
-        .catch(() => ({ pipelineId: p.id, name: p.name, total: 0 }))
+      v1Fetch(`/opportunities/search?pipelineId=${p.id}&locationId=${LOCATION_ID}&limit=1`)
+        .then(d => ({ name: p.name, count: d.meta?.total ?? (d.opportunities?.length ?? 0) }))
+        .catch(() => ({ name: p.name, count: 0 }))
     )
   );
 
   const stages = oppResults
     .filter(r => r.status === 'fulfilled')
-    .map(r => (r as PromiseFulfilledResult<{ name: string; total: number }>).value)
-    .map(({ name, total }) => ({ name, count: total }));
+    .map(r => (r as PromiseFulfilledResult<{ name: string; count: number }>).value);
 
   const totalOpps = stages.reduce((sum, s) => sum + s.count, 0);
+
+  // Fetch real unread conversations via v2 Private Integration
+  let conversations: {
+    id: string;
+    contactName: string;
+    lastMessage: string;
+    lastMessageDate: string;
+    unreadCount: number;
+    channel: string;
+  }[] = [];
+
+  if (PRIVATE_TOKEN) {
+    try {
+      const convData = await v2Fetch(
+        `/conversations/search?locationId=${LOCATION_ID}&unreadOnly=true&limit=20&sortBy=lastMessageDate&sortOrder=desc`
+      );
+      const rawConvs = convData.conversations ?? [];
+      conversations = rawConvs.map((c: {
+        id: string;
+        contactName?: string;
+        fullName?: string;
+        lastMessage?: string;
+        lastMessageBody?: string;
+        lastMessageDate?: string;
+        unreadCount?: number;
+        type?: string;
+        channel?: string;
+      }) => ({
+        id: c.id,
+        contactName: c.contactName ?? c.fullName ?? 'Unknown',
+        lastMessage: c.lastMessage ?? c.lastMessageBody ?? '',
+        lastMessageDate: c.lastMessageDate ?? new Date().toISOString(),
+        unreadCount: c.unreadCount ?? 1,
+        channel: c.type ?? c.channel ?? 'SMS',
+      }));
+    } catch {
+      conversations = [];
+    }
+  }
 
   return NextResponse.json({
     mock: false,
     apiPending: false,
-    conversations: MOCK_CONVERSATIONS, // real convs need OAuth — showing sample
-    conversationsNote: 'GHL v1 does not expose conversations — requires OAuth upgrade',
+    conversations,
     contacts,
     opportunities: { total: totalOpps, stages },
   });

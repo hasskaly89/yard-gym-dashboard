@@ -2,25 +2,43 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { calcTarget, BLOCK_CONFIGS, WEEK_CONFIG, PHASE_COLORS, roundToPlate, isPR } from '@/lib/rig/weights'
+import { calcTarget, BLOCK_CONFIGS, PHASE_COLORS, roundToPlate, isPR } from '@/lib/rig/weights'
 import type { BlockType } from '@/lib/rig/weights'
 import confetti from 'canvas-confetti'
 
 const LIFTS = ['squat', 'bench', 'deadlift'] as const
 type Lift = typeof LIFTS[number]
 
-const LIFT_META: Record<Lift, { abbr: string; color: string }> = {
-  squat:    { abbr: 'S', color: '#FF5722' },
-  bench:    { abbr: 'B', color: '#8B5CF6' },
-  deadlift: { abbr: 'D', color: '#3B82F6' },
+// Wodify-style: each lift gets its own colour identity
+const LIFT_META: Record<Lift, { label: string; abbr: string; hue: string }> = {
+  squat:    { label: 'Squat',    abbr: 'S', hue: '#FF5C3E' },
+  bench:    { label: 'Bench',    abbr: 'B', hue: '#7C6FFF' },
+  deadlift: { label: 'Deadlift', abbr: 'D', hue: '#00C9A7' },
+}
+
+// Dark palette
+const C = {
+  bg:       '#0F0E1F',
+  card:     '#1A1830',
+  cardAlt:  '#201E38',
+  border:   'rgba(255,255,255,0.07)',
+  borderHi: 'rgba(255,255,255,0.13)',
+  orange:   '#FF5C3E',
+  white:    '#FFFFFF',
+  dim:      'rgba(255,255,255,0.45)',
+  dimmer:   'rgba(255,255,255,0.22)',
+  inputBg:  'rgba(255,255,255,0.06)',
+  inputBdr: 'rgba(255,255,255,0.14)',
+  green:    '#00C896',
 }
 
 interface ThreeRM { lift: Lift; weight_kg: number }
 interface LoggedLift { lift: Lift; weight_kg: number; reps: number; is_pr: boolean }
 
-function CheckIcon() {
+function Tick({ size = 16, color = '#fff' }: { size?: number; color?: string }) {
   return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+      stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="20 6 9 17 4 12" />
     </svg>
   )
@@ -61,7 +79,6 @@ export default function RigLogPage() {
         .select('rm3, rig_lifts!lift_id(slug)')
         .eq('member_id', m.id)
         .eq('block_id', b.id)
-
       setThreeRMs(
         (rms as any[])?.map(r => ({ lift: r.rig_lifts?.slug as Lift, weight_kg: r.rm3 }))
           .filter(r => r.lift) || []
@@ -71,7 +88,6 @@ export default function RigLogPage() {
         .from('rig_lift_results')
         .select('actual_weight, reps_completed, is_pr, rig_lifts!lift_id(slug)')
         .eq('member_id', m.id)
-
       setWeekLifts(
         (lifts as any[])?.map(l => ({
           lift: l.rig_lifts?.slug as Lift,
@@ -81,7 +97,6 @@ export default function RigLogPage() {
         })).filter(l => l.lift) || []
       )
     }
-
     setLoading(false)
   }
 
@@ -90,34 +105,25 @@ export default function RigLogPage() {
     const rawWeight = parseFloat(weights[lift])
     if (!rawWeight || rawWeight <= 0) return
 
-    setSaving(lift)
-    setSaveError(null)
+    setSaving(lift); setSaveError(null)
     const weight = roundToPlate(rawWeight)
     const currentRM = threeRMs.find(r => r.lift === lift)?.weight_kg ?? 0
     const blockType = (block.block_type as BlockType) || 'signature'
-    const blockCfg = BLOCK_CONFIGS[blockType]
-    const weekCfg = blockCfg.weeks.find(w => w.week === block.current_week) ?? blockCfg.weeks[0]
+    const wkCfg = BLOCK_CONFIGS[blockType].weeks.find(w => w.week === block.current_week) ?? BLOCK_CONFIGS[blockType].weeks[0]
     const pr = isPR(weight, currentRM)
 
-    const { data: liftRow, error: liftErr } = await supabase
-      .from('rig_lifts').select('id').eq('slug', lift).single()
-    const { data: weekRow, error: weekErr } = await supabase
-      .from('rig_block_weeks').select('id')
+    const { data: liftRow, error: liftErr } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
+    const { data: weekRow, error: weekErr } = await supabase.from('rig_block_weeks').select('id')
       .eq('block_id', block.id).eq('week_number', block.current_week ?? 1).single()
 
     if (!liftRow || !weekRow) {
-      setSaveError(liftErr?.message || weekErr?.message || 'Could not find lift or week — contact your coach.')
-      setSaving(null)
-      return
+      setSaveError(liftErr?.message || weekErr?.message || 'Could not find lift or week.')
+      setSaving(null); return
     }
 
     const { error } = await supabase.from('rig_lift_results').upsert({
-      member_id: memberId,
-      block_week_id: weekRow.id,
-      lift_id: liftRow.id,
-      actual_weight: weight,
-      reps_completed: weekCfg.reps,
-      is_pr: pr,
+      member_id: memberId, block_week_id: weekRow.id, lift_id: liftRow.id,
+      actual_weight: weight, reps_completed: wkCfg.reps, is_pr: pr,
       logged_at: new Date().toISOString(),
     }, { onConflict: 'member_id,block_week_id,lift_id' })
 
@@ -126,8 +132,7 @@ export default function RigLogPage() {
     if (pr) {
       confetti({ particleCount: 150, spread: 80, origin: { y: 0.5 } })
       await supabase.from('rig_member_maxes').upsert({
-        member_id: memberId, block_id: block.id,
-        lift_id: liftRow.id, rm3: weight,
+        member_id: memberId, block_id: block.id, lift_id: liftRow.id, rm3: weight,
       }, { onConflict: 'member_id,block_id,lift_id' })
     }
 
@@ -141,21 +146,14 @@ export default function RigLogPage() {
     const raw = parseFloat(rmInputs[lift])
     if (!raw || raw <= 0) return
 
-    setSaving(lift)
-    setSaveError(null)
+    setSaving(lift); setSaveError(null)
     const weight = roundToPlate(raw)
 
-    const { data: liftRow, error: liftErr } = await supabase
-      .from('rig_lifts').select('id').eq('slug', lift).single()
-    if (!liftRow) {
-      setSaveError(liftErr?.message || `Could not find lift "${lift}".`)
-      setSaving(null)
-      return
-    }
+    const { data: liftRow, error: liftErr } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
+    if (!liftRow) { setSaveError(liftErr?.message || `Could not find "${lift}".`); setSaving(null); return }
 
     const { error } = await supabase.from('rig_member_maxes').upsert({
-      member_id: memberId, block_id: block.id,
-      lift_id: liftRow.id, rm3: weight,
+      member_id: memberId, block_id: block.id, lift_id: liftRow.id, rm3: weight,
     }, { onConflict: 'member_id,block_id,lift_id' })
 
     if (error) { setSaveError(error.message); setSaving(null); return }
@@ -165,96 +163,93 @@ export default function RigLogPage() {
     setSaving(null)
   }
 
-  // ─── Loading ───────────────────────────────────────────────────────────────
+  // ── Loading state ──────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-64">
+      <div style={{ backgroundColor: C.bg, minHeight: '100vh', margin: '-20px -16px' }}
+        className="flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 animate-spin"
-          style={{ borderColor: '#FF5722', borderTopColor: 'transparent' }} />
+          style={{ borderColor: C.orange, borderTopColor: 'transparent' }} />
       </div>
     )
   }
 
   if (!block) {
     return (
-      <div className="px-4 py-6 text-center">
-        <div className="w-20 h-20 rounded-2xl mx-auto mb-4 flex items-center justify-center" style={{ backgroundColor: '#F3F2F0' }}>
-          <span className="text-4xl">🏋️</span>
-        </div>
-        <p className="font-bold text-lg" style={{ color: '#1A1A1A' }}>No Active Block</p>
-        <p className="text-sm mt-1" style={{ color: '#888888' }}>Your trainer will set up a training block soon.</p>
+      <div style={{ backgroundColor: C.bg, minHeight: '100vh', margin: '-20px -16px' }}
+        className="flex flex-col items-center justify-center gap-3 text-center px-8">
+        <div className="text-5xl mb-2">🏋️</div>
+        <p className="font-black text-xl" style={{ color: C.white }}>No Active Block</p>
+        <p className="text-sm" style={{ color: C.dim }}>Your trainer will set up a training block soon.</p>
       </div>
     )
   }
 
-  // ─── Derived state ─────────────────────────────────────────────────────────
+  // ── Derived ────────────────────────────────────────────────────────────────
   const blockType = (block.block_type as BlockType) || 'signature'
-  const blockCfg = BLOCK_CONFIGS[blockType]
-  const weekCfg = blockCfg.weeks.find(w => w.week === block.current_week) ?? blockCfg.weeks[0]
+  const blockCfg  = BLOCK_CONFIGS[blockType]
+  const weekCfg   = blockCfg.weeks.find(w => w.week === block.current_week) ?? blockCfg.weeks[0]
   const phaseColor = PHASE_COLORS[weekCfg.phase]
   const totalWeeks = blockCfg.durationWeeks
   const loggedCount = LIFTS.filter(l => weekLifts.find(wl => wl.lift === l)).length
   const allDone = loggedCount === LIFTS.length
 
   return (
-    <div className="px-4 py-5 space-y-4">
+    // Full dark bleed — overrides the shell's warm background
+    <div style={{ backgroundColor: C.bg, margin: '-20px -16px', padding: '24px 16px', paddingBottom: 96 }}>
 
-      {/* ── Hero card ───────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl p-5 text-white relative overflow-hidden" style={{ backgroundColor: '#1A1A1A' }}>
-        {/* Phase glow */}
-        <div className="absolute top-0 right-0 w-48 h-48 rounded-full blur-3xl pointer-events-none"
-          style={{ backgroundColor: phaseColor, opacity: 0.15, transform: 'translate(40%, -40%)' }} />
-
-        <div className="flex items-start justify-between mb-3 relative">
-          <p className="text-xs font-semibold tracking-widest uppercase" style={{ color: 'rgba(255,255,255,0.5)' }}>
+      {/* ── Page header ───────────────────────────────────────────────────── */}
+      <div className="mb-5">
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs font-bold tracking-widest uppercase" style={{ color: C.dim }}>
             {block.name}
           </p>
           <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-            style={{ backgroundColor: phaseColor + '28', color: phaseColor, border: `1px solid ${phaseColor}40` }}>
+            style={{ backgroundColor: phaseColor + '22', color: phaseColor, border: `1px solid ${phaseColor}44` }}>
             {weekCfg.phase}
           </span>
         </div>
 
-        <div className="relative mb-4">
-          <p className="text-2xl font-black tracking-tight">{weekCfg.label}</p>
-          <p className="text-sm mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            {weekCfg.reps} reps · {Math.round(weekCfg.pct * 100)}% intensity
-          </p>
-        </div>
+        <h1 className="font-black text-2xl leading-tight" style={{ color: C.white }}>
+          {weekCfg.label}
+        </h1>
+        <p className="text-sm mt-0.5" style={{ color: C.dim }}>
+          {Math.round(weekCfg.pct * 100)}% intensity · {weekCfg.reps} reps
+        </p>
 
-        {/* Week progress */}
-        <div className="flex items-center gap-1.5 relative">
+        {/* Week dots */}
+        <div className="flex items-center gap-1.5 mt-3">
           {Array.from({ length: totalWeeks }).map((_, i) => {
-            const weekNum = i + 1
-            const isPast = weekNum < block.current_week
-            const isCurrent = weekNum === block.current_week
+            const wk = i + 1
             return (
               <div key={i} className="rounded-full transition-all duration-300"
                 style={{
-                  width: isCurrent ? 22 : 8,
-                  height: 8,
-                  backgroundColor: isPast || isCurrent ? phaseColor : 'rgba(255,255,255,0.15)',
-                  opacity: isPast ? 0.5 : 1,
+                  width: wk === block.current_week ? 24 : 8, height: 8,
+                  backgroundColor: wk <= block.current_week ? phaseColor : 'rgba(255,255,255,0.12)',
+                  opacity: wk < block.current_week ? 0.45 : 1,
                 }}
               />
             )
           })}
-          <p className="ml-auto text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.4)' }}>
-            {block.current_week} / {totalWeeks}
+          <p className="ml-auto text-xs font-bold" style={{ color: C.dimmer }}>
+            {block.current_week}/{totalWeeks}
           </p>
         </div>
       </div>
 
-      {/* ── Tab switcher ────────────────────────────────────────────────────── */}
-      <div className="flex rounded-xl p-1 gap-1" style={{ backgroundColor: '#F3F2F0' }}>
+      {/* Divider */}
+      <div className="mb-4" style={{ height: 1, backgroundColor: C.border }} />
+
+      {/* ── Tab switcher ──────────────────────────────────────────────────── */}
+      <div className="flex rounded-xl p-1 mb-4 gap-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
         {(['log', '3rm'] as const).map(t => (
           <button key={t}
             onClick={() => { setTab(t); setSaveError(null) }}
             className="flex-1 py-2 rounded-lg text-sm font-bold transition-all"
             style={{
-              backgroundColor: tab === t ? '#FF5722' : 'transparent',
-              color: tab === t ? 'white' : '#888888',
-              boxShadow: tab === t ? '0 2px 8px rgba(255,87,34,0.35)' : 'none',
+              backgroundColor: tab === t ? C.orange : 'transparent',
+              color: tab === t ? C.white : C.dim,
+              boxShadow: tab === t ? '0 2px 12px rgba(255,92,62,0.4)' : 'none',
             }}
           >
             {t === 'log' ? 'Log Week' : 'Set 3RM'}
@@ -262,143 +257,192 @@ export default function RigLogPage() {
         ))}
       </div>
 
-      {/* ── Error banner ────────────────────────────────────────────────────── */}
+      {/* ── Error banner ──────────────────────────────────────────────────── */}
       {saveError && (
-        <div className="rounded-xl px-4 py-3 text-sm font-medium flex items-start gap-2"
-          style={{ backgroundColor: '#FFF0EB', color: '#CC3300', border: '1px solid #FFCAB8' }}>
-          <span className="mt-0.5 flex-shrink-0">⚠️</span>
-          <span>{saveError}</span>
+        <div className="rounded-xl px-4 py-3 text-sm font-semibold mb-4 flex gap-2 items-start"
+          style={{ backgroundColor: 'rgba(255,92,62,0.12)', color: '#FF8C78', border: '1px solid rgba(255,92,62,0.3)' }}>
+          <span>⚠️</span><span>{saveError}</span>
         </div>
       )}
 
-      {/* ── LOG TAB ─────────────────────────────────────────────────────────── */}
+      {/* ── LOG TAB ───────────────────────────────────────────────────────── */}
       {tab === 'log' && (
         <div className="space-y-3">
 
-          {/* Progress row */}
-          <div className="flex items-center justify-between px-1">
-            <p className="text-sm font-bold" style={{ color: '#1A1A1A' }}>Today&apos;s Lifts</p>
+          {/* Session header */}
+          <div className="flex items-center justify-between px-1 mb-1">
+            <p className="text-xs font-bold tracking-widest uppercase" style={{ color: C.dim }}>
+              Today&apos;s Session
+            </p>
             {allDone ? (
-              <span className="text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1"
-                style={{ backgroundColor: '#ECFDF5', color: '#16A34A' }}>
-                <span>✓</span> All done
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5"
+                style={{ backgroundColor: 'rgba(0,200,150,0.15)', color: C.green, border: `1px solid rgba(0,200,150,0.3)` }}>
+                <Tick size={12} color={C.green} /> All done
               </span>
             ) : (
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                style={{ backgroundColor: '#F3F2F0', color: '#888888' }}>
-                {loggedCount} of {LIFTS.length}
+              <span className="text-xs font-bold" style={{ color: C.dim }}>
+                {loggedCount}/{LIFTS.length} logged
               </span>
             )}
           </div>
 
-          {/* All done celebration */}
+          {/* All done banner */}
           {allDone && (
-            <div className="rounded-2xl p-4 flex items-center gap-3"
-              style={{ backgroundColor: '#ECFDF5', border: '1px solid #BBF7D0' }}>
+            <div className="rounded-2xl p-4 flex items-center gap-3 mb-2"
+              style={{ backgroundColor: 'rgba(0,200,150,0.08)', border: `1px solid rgba(0,200,150,0.2)` }}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                style={{ backgroundColor: '#22C55E' }}>
-                <CheckIcon />
+                style={{ backgroundColor: C.green }}>
+                <Tick size={18} />
               </div>
               <div>
-                <p className="font-bold text-sm" style={{ color: '#15803D' }}>Session complete 💪</p>
-                <p className="text-xs mt-0.5" style={{ color: '#16A34A' }}>All lifts logged. Great work this week.</p>
+                <p className="font-black text-sm" style={{ color: C.green }}>Session complete</p>
+                <p className="text-xs mt-0.5" style={{ color: 'rgba(0,200,150,0.6)' }}>
+                  All lifts logged. See you next week 💪
+                </p>
               </div>
             </div>
           )}
 
           {LIFTS.map(lift => {
-            const rm = threeRMs.find(r => r.lift === lift)
+            const rm     = threeRMs.find(r => r.lift === lift)
             const target = rm ? calcTarget(rm.weight_kg, block.current_week, blockType) : null
             const logged = weekLifts.find(l => l.lift === lift)
-            const meta = LIFT_META[lift]
-            const pct = rm && (logged?.weight_kg ?? target)
-              ? Math.round(((logged?.weight_kg ?? target ?? 0) / rm.weight_kg) * 100)
-              : null
+            const meta   = LIFT_META[lift]
+            const displayWeight = logged?.weight_kg ?? target
+            const pct = rm && displayWeight ? Math.round((displayWeight / rm.weight_kg) * 100) : null
+            const diff = logged && target ? +(logged.weight_kg - target).toFixed(1) : null
 
             return (
-              <div key={lift} className="bg-white rounded-2xl border overflow-hidden"
-                style={{ borderColor: logged ? (logged.is_pr ? '#FFCAB8' : '#D1FAE5') : '#E8E6E3' }}>
+              <div key={lift} className="rounded-2xl overflow-hidden"
+                style={{
+                  backgroundColor: C.card,
+                  border: `1px solid ${logged?.is_pr ? meta.hue + '40' : C.border}`,
+                  boxShadow: logged?.is_pr ? `0 0 24px ${meta.hue}20` : 'none',
+                }}>
 
-                {/* Top row */}
-                <div className="px-4 pt-4">
-                  <div className="flex items-center gap-3">
-                    {/* Badge */}
-                    <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 font-black text-white text-base transition-colors"
-                      style={{ backgroundColor: logged ? (logged.is_pr ? '#FF5722' : '#22C55E') : meta.color }}>
-                      {logged ? <CheckIcon /> : meta.abbr}
-                    </div>
+                {/* PR flash bar */}
+                {logged?.is_pr && (
+                  <div className="h-1 w-full"
+                    style={{ background: `linear-gradient(90deg, ${meta.hue}, ${C.orange})` }} />
+                )}
 
-                    <div className="flex-1 min-w-0">
-                      <p className="font-bold capitalize" style={{ color: '#1A1A1A' }}>{lift}</p>
-                      {target ? (
-                        <p className="text-sm" style={{ color: '#888888' }}>
-                          Target <strong style={{ color: '#FF5722' }}>{target} kg</strong>
-                          <span style={{ color: '#BBBBBB' }}> × {weekCfg.reps}</span>
-                        </p>
-                      ) : (
-                        <p className="text-sm" style={{ color: '#BBBBBB' }}>Set your 3RM to unlock target</p>
-                      )}
-                    </div>
-
-                    {logged && (
-                      <div className="text-right flex-shrink-0 ml-2">
-                        <p className="text-xl font-black"
-                          style={{ color: logged.is_pr ? '#FF5722' : '#1A1A1A', lineHeight: 1.1 }}>
-                          {logged.weight_kg}
-                          <span className="text-sm font-semibold ml-0.5" style={{ color: '#888888' }}>kg</span>
-                        </p>
-                        {logged.is_pr ? (
-                          <span className="text-xs font-bold" style={{ color: '#FF5722' }}>NEW PR 🔥</span>
-                        ) : pct ? (
-                          <p className="text-xs font-semibold" style={{ color: '#888888' }}>{pct}%</p>
-                        ) : null}
+                <div className="px-4 pt-4 pb-3">
+                  {/* Top row: badge + name + status */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0"
+                        style={{ backgroundColor: logged ? (logged.is_pr ? meta.hue : C.green) : meta.hue + '22', color: logged ? C.white : meta.hue }}>
+                        {logged ? <Tick size={16} /> : meta.abbr}
                       </div>
+                      <p className="font-black text-base tracking-wide uppercase" style={{ color: C.white }}>
+                        {meta.label}
+                      </p>
+                    </div>
+
+                    {logged?.is_pr ? (
+                      <span className="text-xs font-black px-2.5 py-1 rounded-full tracking-wide"
+                        style={{ backgroundColor: meta.hue + '22', color: meta.hue }}>
+                        🔥 NEW PR
+                      </span>
+                    ) : logged ? (
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+                        style={{ backgroundColor: 'rgba(0,200,150,0.12)', color: C.green }}>
+                        ✓ Logged
+                      </span>
+                    ) : target ? (
+                      <span className="text-xs font-bold" style={{ color: C.dimmer }}>
+                        Target set
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold" style={{ color: C.dimmer }}>
+                        Set 3RM first
+                      </span>
                     )}
                   </div>
 
+                  {/* Big weight display — Wodify-style */}
+                  {displayWeight ? (
+                    <div className="mb-3">
+                      <div className="flex items-end gap-1 leading-none">
+                        <span className="font-black"
+                          style={{
+                            fontSize: 52,
+                            lineHeight: 1,
+                            color: logged ? (logged.is_pr ? meta.hue : C.white) : C.orange,
+                            letterSpacing: '-2px',
+                          }}>
+                          {displayWeight}
+                        </span>
+                        <span className="font-bold mb-2 text-base" style={{ color: C.dim }}>kg</span>
+                        {diff !== null && diff !== 0 && (
+                          <span className="font-bold mb-2 text-sm ml-1"
+                            style={{ color: diff > 0 ? C.green : C.orange }}>
+                            {diff > 0 ? `+${diff}` : diff}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm font-semibold" style={{ color: C.dim }}>
+                        {logged
+                          ? `${logged.reps} reps completed`
+                          : `${weekCfg.reps} reps · target`
+                        }
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mb-3 py-3">
+                      <p className="text-sm font-semibold" style={{ color: C.dimmer }}>
+                        Set your 3RM to see this week's target weight
+                      </p>
+                    </div>
+                  )}
+
                   {/* Intensity bar */}
                   {pct !== null && (
-                    <div className="mt-3 mb-1">
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: '#F3F2F0' }}>
+                    <div className="mb-3">
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}>
                         <div className="h-full rounded-full transition-all duration-700"
                           style={{
-                            width: `${Math.min(pct, 110)}%`,
-                            backgroundColor: logged?.is_pr ? '#FF5722' : logged ? '#22C55E' : '#E0DFDC',
+                            width: `${Math.min(pct, 105)}%`,
+                            background: logged?.is_pr
+                              ? `linear-gradient(90deg, ${meta.hue}, ${C.orange})`
+                              : logged
+                              ? C.green
+                              : `linear-gradient(90deg, ${meta.hue}99, ${meta.hue}44)`,
                           }}
                         />
                       </div>
-                      <p className="text-xs mt-1 font-medium" style={{ color: '#BBBBBB' }}>
-                        {pct}% of 3RM
+                      <p className="text-xs mt-1 font-semibold" style={{ color: C.dimmer }}>
+                        {pct}% of 3RM{rm ? ` · 3RM: ${rm.weight_kg} kg` : ''}
                       </p>
                     </div>
                   )}
                 </div>
 
                 {/* Input row */}
-                <div className="px-4 pb-4 pt-3 flex gap-2">
+                <div className="px-4 pb-4 flex gap-2">
                   <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder={logged ? `${logged.weight_kg} kg` : target ? `${target} kg` : 'kg lifted'}
+                    type="number" inputMode="decimal"
+                    placeholder={logged ? `${logged.weight_kg}` : target ? `${target}` : 'kg'}
                     value={weights[lift]}
                     onChange={e => setWeights(prev => ({ ...prev, [lift]: e.target.value }))}
-                    className="flex-1 px-3 rounded-xl border outline-none font-semibold"
-                    style={{ height: '46px', borderColor: '#E8E6E3', backgroundColor: '#F8F7F5', color: '#1A1A1A', fontSize: '16px' }}
+                    className="flex-1 px-3 rounded-xl outline-none font-bold"
+                    style={{
+                      height: 48, border: `1px solid ${C.inputBdr}`,
+                      backgroundColor: C.inputBg, color: C.white,
+                      fontSize: 16, caretColor: C.orange,
+                    }}
                   />
                   <button
                     onClick={() => logLift(lift)}
                     disabled={saving === lift || !weights[lift]}
-                    className="rounded-xl font-bold text-white text-sm transition-all"
+                    className="rounded-xl font-black text-sm transition-all"
                     style={{
-                      height: '46px',
-                      minWidth: '84px',
-                      paddingLeft: 20,
-                      paddingRight: 20,
-                      backgroundColor: saving === lift
-                        ? '#FFB8A0'
-                        : logged ? '#1A1A1A' : '#FF5722',
-                      opacity: !weights[lift] && saving !== lift ? 0.45 : 1,
-                      boxShadow: weights[lift] && !saving ? '0 2px 10px rgba(255,87,34,0.3)' : 'none',
+                      height: 48, minWidth: 88, paddingLeft: 20, paddingRight: 20,
+                      backgroundColor: saving === lift ? C.orange + '60' : logged ? C.cardAlt : C.orange,
+                      color: C.white,
+                      border: logged && !saving ? `1px solid ${C.borderHi}` : 'none',
+                      opacity: !weights[lift] && saving !== lift ? 0.4 : 1,
+                      boxShadow: weights[lift] && saving !== lift ? `0 4px 16px ${C.orange}50` : 'none',
                     }}
                   >
                     {saving === lift ? '...' : logged ? 'Update' : 'Log it'}
@@ -410,73 +454,85 @@ export default function RigLogPage() {
         </div>
       )}
 
-      {/* ── 3RM TAB ─────────────────────────────────────────────────────────── */}
+      {/* ── 3RM TAB ───────────────────────────────────────────────────────── */}
       {tab === '3rm' && (
         <div className="space-y-3">
-          <div className="px-1">
-            <p className="text-sm font-bold" style={{ color: '#1A1A1A' }}>Your 3-Rep Maxes</p>
-            <p className="text-sm mt-0.5" style={{ color: '#888888' }}>
-              All weekly targets are calculated from these numbers.
+          <div className="px-1 mb-1">
+            <p className="text-xs font-bold tracking-widest uppercase" style={{ color: C.dim }}>
+              Your 3-Rep Maxes
+            </p>
+            <p className="text-sm mt-1" style={{ color: C.dimmer }}>
+              All weekly targets auto-calculate from these.
             </p>
           </div>
 
           {LIFTS.map(lift => {
             const current = threeRMs.find(r => r.lift === lift)
-            const meta = LIFT_META[lift]
+            const meta    = LIFT_META[lift]
+
             return (
-              <div key={lift} className="bg-white rounded-2xl border" style={{ borderColor: '#E8E6E3' }}>
-                <div className="px-4 pt-4 pb-3 flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 font-black text-white text-base"
-                    style={{ backgroundColor: meta.color }}>
-                    {meta.abbr}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold capitalize" style={{ color: '#1A1A1A' }}>{lift}</p>
-                    {current ? (
-                      <p className="text-sm" style={{ color: '#888888' }}>
-                        Current 3RM
+              <div key={lift} className="rounded-2xl overflow-hidden"
+                style={{ backgroundColor: C.card, border: `1px solid ${C.border}` }}>
+                <div className="px-4 pt-4 pb-3">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0"
+                        style={{ backgroundColor: meta.hue + '22', color: meta.hue }}>
+                        {meta.abbr}
+                      </div>
+                      <p className="font-black text-base tracking-wide uppercase" style={{ color: C.white }}>
+                        {meta.label}
                       </p>
-                    ) : (
-                      <p className="text-sm" style={{ color: '#BBBBBB' }}>Not set yet</p>
+                    </div>
+                    {!current && (
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+                        style={{ backgroundColor: C.orange + '18', color: C.orange }}>
+                        Not set
+                      </span>
                     )}
                   </div>
+
+                  {/* Big 3RM display */}
                   {current ? (
-                    <div className="text-right flex-shrink-0">
-                      <p className="font-black" style={{ color: '#1A1A1A', fontSize: 28, lineHeight: 1 }}>
-                        {current.weight_kg}
-                      </p>
-                      <p className="text-xs font-bold" style={{ color: '#888888' }}>kg</p>
+                    <div className="mb-3">
+                      <div className="flex items-end gap-1 leading-none">
+                        <span className="font-black" style={{ fontSize: 48, lineHeight: 1, color: meta.hue, letterSpacing: '-2px' }}>
+                          {current.weight_kg}
+                        </span>
+                        <span className="font-bold mb-1.5 text-base" style={{ color: C.dim }}>kg</span>
+                      </div>
+                      <p className="text-sm font-semibold" style={{ color: C.dim }}>Current 3RM</p>
                     </div>
                   ) : (
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                      style={{ backgroundColor: '#FFF0EB', color: '#FF5722' }}>
-                      Set now
-                    </span>
+                    <p className="text-sm font-semibold mb-3" style={{ color: C.dimmer }}>
+                      Enter your 3-rep max below
+                    </p>
                   )}
                 </div>
 
                 <div className="px-4 pb-4 flex gap-2">
                   <input
-                    type="number"
-                    inputMode="decimal"
+                    type="number" inputMode="decimal"
                     placeholder={current ? `Update (${current.weight_kg} kg)` : 'Enter 3RM in kg'}
                     value={rmInputs[lift]}
                     onChange={e => setRmInputs(prev => ({ ...prev, [lift]: e.target.value }))}
-                    className="flex-1 px-3 rounded-xl border outline-none font-semibold"
-                    style={{ height: '46px', borderColor: '#E8E6E3', backgroundColor: '#F8F7F5', color: '#1A1A1A', fontSize: '16px' }}
+                    className="flex-1 px-3 rounded-xl outline-none font-bold"
+                    style={{
+                      height: 48, border: `1px solid ${C.inputBdr}`,
+                      backgroundColor: C.inputBg, color: C.white,
+                      fontSize: 16, caretColor: meta.hue,
+                    }}
                   />
                   <button
                     onClick={() => saveRM(lift)}
                     disabled={saving === lift || !rmInputs[lift]}
-                    className="rounded-xl font-bold text-white text-sm transition-all"
+                    className="rounded-xl font-black text-sm transition-all"
                     style={{
-                      height: '46px',
-                      minWidth: '84px',
-                      paddingLeft: 20,
-                      paddingRight: 20,
-                      backgroundColor: saving === lift ? '#FFB8A0' : '#FF5722',
-                      opacity: !rmInputs[lift] && saving !== lift ? 0.45 : 1,
-                      boxShadow: rmInputs[lift] && !saving ? '0 2px 10px rgba(255,87,34,0.3)' : 'none',
+                      height: 48, minWidth: 88, paddingLeft: 20, paddingRight: 20,
+                      backgroundColor: saving === lift ? C.orange + '60' : C.orange,
+                      color: C.white,
+                      opacity: !rmInputs[lift] && saving !== lift ? 0.4 : 1,
+                      boxShadow: rmInputs[lift] && saving !== lift ? `0 4px 16px ${C.orange}50` : 'none',
                     }}
                   >
                     {saving === lift ? '...' : current ? 'Update' : 'Save'}
@@ -487,7 +543,6 @@ export default function RigLogPage() {
           })}
         </div>
       )}
-
     </div>
   )
 }

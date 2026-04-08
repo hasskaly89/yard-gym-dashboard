@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { calcTarget, WEEK_CONFIG, roundToPlate, isPR } from '@/lib/rig/weights'
 import confetti from 'canvas-confetti'
@@ -28,6 +28,7 @@ export default function RigLogPage() {
   const [weekLifts, setWeekLifts] = useState<LoggedLift[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<Lift | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [tab, setTab] = useState<'log' | '3rm'>('log')
 
   // Form state per lift
@@ -61,20 +62,30 @@ export default function RigLogPage() {
     setBlock(b)
 
     if (b) {
+      // Join rig_lifts to get the slug so comparisons work
       const { data: rms } = await supabase
         .from('rig_member_maxes')
-        .select('lift_id, rm3')
+        .select('rm3, rig_lifts!lift_id(slug)')
         .eq('member_id', m.id)
         .eq('block_id', b.id)
 
-      setThreeRMs((rms as any[])?.map(r => ({ lift: r.lift_id, weight_kg: r.rm3 })) || [])
+      setThreeRMs(
+        (rms as any[])
+          ?.map(r => ({ lift: r.rig_lifts?.slug as Lift, weight_kg: r.rm3 }))
+          .filter(r => r.lift) || []
+      )
 
+      // Join rig_lifts to get the slug for week lifts too
       const { data: lifts } = await supabase
         .from('rig_lift_results')
-        .select('lift_id, actual_weight, reps_completed, is_pr')
+        .select('actual_weight, reps_completed, is_pr, rig_lifts!lift_id(slug)')
         .eq('member_id', m.id)
 
-      setWeekLifts((lifts as any[])?.map(l => ({ lift: l.lift_id, weight_kg: l.actual_weight, reps: l.reps_completed, is_pr: l.is_pr })) || [])
+      setWeekLifts(
+        (lifts as any[])
+          ?.map(l => ({ lift: l.rig_lifts?.slug as Lift, weight_kg: l.actual_weight, reps: l.reps_completed, is_pr: l.is_pr }))
+          .filter(l => l.lift) || []
+      )
     }
 
     setLoading(false)
@@ -86,15 +97,21 @@ export default function RigLogPage() {
     if (!rawWeight || rawWeight <= 0) return
 
     setSaving(lift)
+    setSaveError(null)
     const weight = roundToPlate(rawWeight)
     const currentRM = threeRMs.find(r => r.lift === lift)?.weight_kg ?? 0
     const weekConfig = WEEK_CONFIG.find(w => w.week === block.current_week)!
     const pr = isPR(weight, currentRM)
 
     // Get lift id and block_week_id
-    const { data: liftRow } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
-    const { data: weekRow } = await supabase.from('rig_block_weeks').select('id').eq('block_id', block.id).eq('week_number', block.current_week ?? 1).single()
-    if (!liftRow || !weekRow) { setSaving(null); return }
+    const { data: liftRow, error: liftErr } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
+    const { data: weekRow, error: weekErr } = await supabase.from('rig_block_weeks').select('id').eq('block_id', block.id).eq('week_number', block.current_week ?? 1).single()
+
+    if (!liftRow || !weekRow) {
+      setSaveError(liftErr?.message || weekErr?.message || 'Could not find lift or week — contact your coach.')
+      setSaving(null)
+      return
+    }
 
     const { error } = await supabase.from('rig_lift_results').upsert({
       member_id: memberId,
@@ -106,20 +123,24 @@ export default function RigLogPage() {
       logged_at: new Date().toISOString(),
     }, { onConflict: 'member_id,block_week_id,lift_id' })
 
-    if (!error) {
-      if (pr) {
-        confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
-        await supabase.from('rig_member_maxes').upsert({
-          member_id: memberId,
-          block_id: block.id,
-          lift_id: liftRow.id,
-          rm3: weight,
-        }, { onConflict: 'member_id,block_id,lift_id' })
-      }
-      setWeights(prev => ({ ...prev, [lift]: '' }))
-      await loadData()
+    if (error) {
+      setSaveError(error.message)
+      setSaving(null)
+      return
     }
 
+    if (pr) {
+      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
+      await supabase.from('rig_member_maxes').upsert({
+        member_id: memberId,
+        block_id: block.id,
+        lift_id: liftRow.id,
+        rm3: weight,
+      }, { onConflict: 'member_id,block_id,lift_id' })
+    }
+
+    setWeights(prev => ({ ...prev, [lift]: '' }))
+    await loadData()
     setSaving(null)
   }
 
@@ -129,16 +150,33 @@ export default function RigLogPage() {
     if (!raw || raw <= 0) return
 
     setSaving(lift)
+    setSaveError(null)
     const weight = roundToPlate(raw)
 
-    const { data: liftRow2 } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
-    if (!liftRow2) { setSaving(null); return }
-    await supabase.from('rig_member_maxes').upsert({
+    const { data: liftRow, error: liftErr } = await supabase
+      .from('rig_lifts')
+      .select('id')
+      .eq('slug', lift)
+      .single()
+
+    if (!liftRow) {
+      setSaveError(liftErr?.message || `Could not find lift "${lift}" — contact your coach.`)
+      setSaving(null)
+      return
+    }
+
+    const { error } = await supabase.from('rig_member_maxes').upsert({
       member_id: memberId,
       block_id: block.id,
-      lift_id: liftRow2.id,
+      lift_id: liftRow.id,
       rm3: weight,
     }, { onConflict: 'member_id,block_id,lift_id' })
+
+    if (error) {
+      setSaveError(error.message)
+      setSaving(null)
+      return
+    }
 
     setRmInputs(prev => ({ ...prev, [lift]: '' }))
     await loadData()
@@ -169,15 +207,22 @@ export default function RigLogPage() {
     <div className="px-4 py-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold" style={{ color: '#1A1A1A' }}>Log Lifts</h1>
-        <p className="text-sm mt-1" style={{ color: '#888888' }}>{block.name} · {weekConfig.label}</p>
+        <p className="text-sm mt-1" style={{ color: '#888888' }}>{block.name} · {weekConfig?.label ?? `Week ${block.current_week}`}</p>
       </div>
+
+      {/* Error banner */}
+      {saveError && (
+        <div className="rounded-xl px-4 py-3 text-sm font-medium" style={{ backgroundColor: '#FFF0EB', color: '#CC3300', border: '1px solid #FFCAB8' }}>
+          {saveError}
+        </div>
+      )}
 
       {/* Tab */}
       <div className="flex rounded-xl p-1" style={{ backgroundColor: '#F3F2F0' }}>
         {(['log', '3rm'] as const).map(t => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => { setTab(t); setSaveError(null) }}
             className="flex-1 py-2 rounded-lg text-sm font-semibold transition-all"
             style={{
               backgroundColor: tab === t ? '#FF5722' : 'transparent',
@@ -203,7 +248,7 @@ export default function RigLogPage() {
                     <p className="font-semibold capitalize text-lg" style={{ color: '#1A1A1A' }}>{lift}</p>
                     {target ? (
                       <p className="text-sm" style={{ color: '#888888' }}>
-                        Target: <strong style={{ color: '#FF5722' }}>{target} kg</strong> × {weekConfig.reps}
+                        Target: <strong style={{ color: '#FF5722' }}>{target} kg</strong> × {weekConfig?.reps}
                       </p>
                     ) : (
                       <p className="text-sm" style={{ color: '#888888' }}>Set your 3RM first</p>
@@ -273,7 +318,7 @@ export default function RigLogPage() {
                     className="px-4 rounded-xl font-semibold text-white text-sm"
                     style={{ height: '44px', backgroundColor: saving === lift ? '#FFB8A0' : '#FF5722', minWidth: '70px' }}
                   >
-                    {saving === lift ? '...' : 'Save'}
+                    {saving === lift ? '...' : current ? 'Update' : 'Save'}
                   </button>
                 </div>
               </div>

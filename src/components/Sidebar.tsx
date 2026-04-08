@@ -10,6 +10,7 @@ const navItems = [
   { label: "Meta Ads", href: "/meta-ads", icon: "◉" },
   { label: "GoHighLevel", href: "/gohighlevel", icon: "▲" },
   { label: "Timesheets", href: "/timesheets", icon: "◷" },
+  { label: "RIG Calculator", href: "/rig/home", icon: "🏋" },
 ];
 
 export default function Sidebar() {

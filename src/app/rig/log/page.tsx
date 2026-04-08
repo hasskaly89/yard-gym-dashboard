@@ -55,28 +55,26 @@ export default function RigLogPage() {
     const { data: b } = await supabase
       .from('rig_blocks')
       .select('*')
-      .eq('active', true)
+      .eq('is_active', true)
       .single()
 
     setBlock(b)
 
     if (b) {
       const { data: rms } = await supabase
-        .from('rig_three_rms')
-        .select('lift, weight_kg')
+        .from('rig_member_maxes')
+        .select('lift_id, rm3')
         .eq('member_id', m.id)
         .eq('block_id', b.id)
 
-      setThreeRMs((rms as ThreeRM[]) || [])
+      setThreeRMs((rms as any[])?.map(r => ({ lift: r.lift_id, weight_kg: r.rm3 })) || [])
 
       const { data: lifts } = await supabase
-        .from('rig_lifts')
-        .select('lift, weight_kg, reps, is_pr')
+        .from('rig_lift_results')
+        .select('lift_id, actual_weight, reps_completed, is_pr')
         .eq('member_id', m.id)
-        .eq('block_id', b.id)
-        .eq('week_number', b.current_week)
 
-      setWeekLifts((lifts as LoggedLift[]) || [])
+      setWeekLifts((lifts as any[])?.map(l => ({ lift: l.lift_id, weight_kg: l.actual_weight, reps: l.reps_completed, is_pr: l.is_pr })) || [])
     }
 
     setLoading(false)
@@ -93,27 +91,30 @@ export default function RigLogPage() {
     const weekConfig = WEEK_CONFIG.find(w => w.week === block.current_week)!
     const pr = isPR(weight, currentRM)
 
-    const { error } = await supabase.from('rig_lifts').upsert({
+    // Get lift id and block_week_id
+    const { data: liftRow } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
+    const { data: weekRow } = await supabase.from('rig_block_weeks').select('id').eq('block_id', block.id).eq('week_number', block.current_week ?? 1).single()
+    if (!liftRow || !weekRow) { setSaving(null); return }
+
+    const { error } = await supabase.from('rig_lift_results').upsert({
       member_id: memberId,
-      block_id: block.id,
-      week_number: block.current_week,
-      lift,
-      weight_kg: weight,
-      reps: weekConfig.reps,
+      block_week_id: weekRow.id,
+      lift_id: liftRow.id,
+      actual_weight: weight,
+      reps_completed: weekConfig.reps,
       is_pr: pr,
       logged_at: new Date().toISOString(),
-    }, { onConflict: 'member_id,block_id,week_number,lift' })
+    }, { onConflict: 'member_id,block_week_id,lift_id' })
 
     if (!error) {
       if (pr) {
         confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } })
-        // Update 3RM
-        await supabase.from('rig_three_rms').upsert({
+        await supabase.from('rig_member_maxes').upsert({
           member_id: memberId,
           block_id: block.id,
-          lift,
-          weight_kg: weight,
-        }, { onConflict: 'member_id,block_id,lift' })
+          lift_id: liftRow.id,
+          rm3: weight,
+        }, { onConflict: 'member_id,block_id,lift_id' })
       }
       setWeights(prev => ({ ...prev, [lift]: '' }))
       await loadData()
@@ -130,12 +131,14 @@ export default function RigLogPage() {
     setSaving(lift)
     const weight = roundToPlate(raw)
 
-    await supabase.from('rig_three_rms').upsert({
+    const { data: liftRow2 } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
+    if (!liftRow2) { setSaving(null); return }
+    await supabase.from('rig_member_maxes').upsert({
       member_id: memberId,
       block_id: block.id,
-      lift,
-      weight_kg: weight,
-    }, { onConflict: 'member_id,block_id,lift' })
+      lift_id: liftRow2.id,
+      rm3: weight,
+    }, { onConflict: 'member_id,block_id,lift_id' })
 
     setRmInputs(prev => ({ ...prev, [lift]: '' }))
     await loadData()

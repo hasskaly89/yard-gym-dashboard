@@ -166,7 +166,7 @@ export default function RigLogPage() {
   // ── Loading state ──────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div style={{ backgroundColor: C.bg, minHeight: '100vh', margin: '-20px -16px' }}
+      <div style={{ minHeight: '60vh' }}
         className="flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 animate-spin"
           style={{ borderColor: C.orange, borderTopColor: 'transparent' }} />
@@ -176,7 +176,7 @@ export default function RigLogPage() {
 
   if (!block) {
     return (
-      <div style={{ backgroundColor: C.bg, minHeight: '100vh', margin: '-20px -16px' }}
+      <div style={{ minHeight: '60vh' }}
         className="flex flex-col items-center justify-center gap-3 text-center px-8">
         <div className="text-5xl mb-2">🏋️</div>
         <p className="font-black text-xl" style={{ color: C.white }}>No Active Block</p>
@@ -195,8 +195,7 @@ export default function RigLogPage() {
   const allDone = loggedCount === LIFTS.length
 
   return (
-    // Full dark bleed — overrides the shell's warm background
-    <div style={{ backgroundColor: C.bg, margin: '-20px -16px', padding: '24px 16px', paddingBottom: 96 }}>
+    <div style={{ padding: '24px 16px 8px' }}>
 
       {/* ── Page header ───────────────────────────────────────────────────── */}
       <div className="mb-5">

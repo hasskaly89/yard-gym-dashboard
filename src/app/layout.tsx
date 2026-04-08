@@ -1,27 +1,45 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
-import RootLayoutClient from "@/components/RootLayoutClient";
+import type { Metadata, Viewport } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+import RootLayoutClient from '@/components/RootLayoutClient'
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ['latin'] })
 
+// ── Viewport (separate export — required by Next.js 14+) ──────────────────────
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',          // full-screen on iPhone notch / Dynamic Island
+  themeColor: '#0F0E1F',         // dark status bar chrome on Android
+}
+
+// ── Page metadata ──────────────────────────────────────────────────────────────
 export const metadata: Metadata = {
-  title: "The Yard Gym — Dashboard",
-  description: "Business dashboard for The Yard Gym",
-};
+  title: 'The Yard · RIG',
+  description: 'Strength tracking for The Yard Gym',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'RIG',
+    statusBarStyle: 'black-translucent', // dark status bar, content bleeds under notch
+  },
+  icons: {
+    apple: '/apple-touch-icon.png',
+  },
+}
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.className} bg-gym-bg text-gym-text min-h-screen`}>
+    <html lang="en">
+      <body className={inter.className}>
         <RootLayoutClient>
           {children}
         </RootLayoutClient>
       </body>
     </html>
-  );
+  )
 }

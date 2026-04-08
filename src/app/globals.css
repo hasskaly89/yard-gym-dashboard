@@ -1,26 +1,74 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --safe-top:    env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left:   env(safe-area-inset-left);
+  --safe-right:  env(safe-area-inset-right);
 }
 
 @theme inline {
-  --color-gym-bg: #0a0a0a;
-  --color-gym-surface: #111111;
-  --color-gym-border: #1f1f1f;
-  --color-gym-accent: #e11d48;
-  --color-gym-accent-hover: #be123c;
-  --color-gym-muted: #6b7280;
-  --color-gym-text: #f9fafb;
+  --color-gym-bg:             #0a0a0a;
+  --color-gym-surface:        #111111;
+  --color-gym-border:         #1f1f1f;
+  --color-gym-accent:         #e11d48;
+  --color-gym-accent-hover:   #be123c;
+  --color-gym-muted:          #6b7280;
+  --color-gym-text:           #f9fafb;
   --color-gym-text-secondary: #9ca3af;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
+html {
+  /* Prevent rubber-band bounce scrolling on the html element */
+  overscroll-behavior: none;
+  /* Smoother scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+}
+
+body {
+  background: #0F0E1F;
+  color: #ffffff;
+  margin: 0;
+  padding: 0;
+
+  /* Crisp text rendering on Retina / OLED */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Prevent overscroll/bounce on the body */
+  overscroll-behavior: none;
+
+  /* Use the full dynamic viewport height on mobile */
+  min-height: 100dvh;
+}
+
+/* Remove blue flash on tappable elements (iOS / Android) */
 * {
-  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent text size inflation when rotating on iOS */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Make inputs and buttons use body font by default */
+input, button, textarea, select {
+  font-family: inherit;
+}
+
+/* Remove default focus outline; individual components add their own */
+:focus {
+  outline: none;
+}
+
+/* Smooth scroll for anchor links */
+html {
+  scroll-behavior: smooth;
 }

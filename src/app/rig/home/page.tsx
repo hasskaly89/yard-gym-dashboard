@@ -119,7 +119,7 @@ export default async function RigHomePage() {
   // Loading / no member state
   if (!m) {
     return (
-      <div style={{ backgroundColor: C.bg, minHeight: '100vh', margin: '-20px -16px' }}>
+      <div style={{ minHeight: '60vh' }}>
         <div style={{ padding: '40px 24px', textAlign: 'center' }}>
           <p style={{ color: C.dim, fontSize: 14 }}>Member record not found.</p>
         </div>
@@ -128,7 +128,7 @@ export default async function RigHomePage() {
   }
 
   return (
-    <div style={{ backgroundColor: C.bg, margin: '-20px -16px', padding: '24px 16px', paddingBottom: 96 }}>
+    <div style={{ padding: '24px 16px 8px' }}>
 
       {/* Section 1 — Greeting */}
       <div style={{ marginBottom: 28 }}>

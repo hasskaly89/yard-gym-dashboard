@@ -132,7 +132,7 @@ export default async function RigProfilePage() {
     .filter(Boolean) as { lift: Lift; weight_kg: number }[]
 
   return (
-    <div style={{ backgroundColor: C.bg, margin: '-20px -16px', padding: '24px 16px', paddingBottom: 96 }}>
+    <div style={{ padding: '24px 16px 8px' }}>
 
       {/* Section 1 — Profile card */}
       <div

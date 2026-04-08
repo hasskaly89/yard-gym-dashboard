@@ -12,13 +12,9 @@ export async function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
+        getAll() { return request.cookies.getAll() },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
           supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
@@ -30,30 +26,37 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isPublic = pathname.startsWith('/login') || pathname.startsWith('/auth')
+  const isPublic = pathname === '/login' || pathname.startsWith('/auth')
 
-  if (!user && !isPublic) {
+  // Not logged in → redirect to /login for all protected routes
+  if (!user) {
+    if (isPublic) return supabaseResponse
     if (pathname.startsWith('/rig')) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
-    // Owner dashboard doesn't require auth yet (existing behaviour)
+    // Owner dashboard doesn't require auth yet
     return supabaseResponse
   }
 
-  if (user) {
-    const role = user.user_metadata?.role as string | undefined
+  const role = user.user_metadata?.role as string | undefined
 
-    // Members can only access /rig routes
-    if (role === 'member') {
-      if (!pathname.startsWith('/rig') && !pathname.startsWith('/login') && !pathname.startsWith('/auth')) {
-        return NextResponse.redirect(new URL('/rig/home', request.url))
-      }
-    }
+  // Already logged in and hitting /login → send them home
+  if (pathname === '/login') {
+    const dest = role === 'admin' ? '/' : '/rig/home'
+    return NextResponse.redirect(new URL(dest, request.url))
+  }
 
-    // Block members from coach routes
-    if (pathname.startsWith('/rig/coach') && role === 'member') {
+  // Members can only access /rig routes
+  if (role === 'member') {
+    const allowed = pathname.startsWith('/rig') || pathname.startsWith('/auth')
+    if (!allowed) {
       return NextResponse.redirect(new URL('/rig/home', request.url))
     }
+  }
+
+  // Members blocked from coach routes
+  if (role === 'member' && pathname.startsWith('/rig/coach')) {
+    return NextResponse.redirect(new URL('/rig/home', request.url))
   }
 
   return supabaseResponse

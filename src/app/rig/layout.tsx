@@ -8,7 +8,7 @@ export default async function RigLayout({ children }: { children: React.ReactNod
 
   if (!user) redirect('/login')
 
-  const role = (user.user_metadata?.role ?? 'member') as 'member' | 'trainer' | 'owner'
+  const role = (user.user_metadata?.role ?? 'member') as 'member' | 'admin'
 
   // If member, verify they exist in rig_members
   let memberData = null

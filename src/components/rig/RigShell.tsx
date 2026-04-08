@@ -30,9 +30,14 @@ export default function RigShell({ children, user, role, member }: Props) {
     <div style={{ backgroundColor: '#F8F7F5', minHeight: '100vh' }}>
       {/* Header */}
       <header className="sticky top-0 z-40 flex items-center justify-between px-4 h-14 bg-white border-b" style={{ borderColor: '#E8E6E3' }}>
-        <div>
+        <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-center rounded-lg" style={{ width: 28, height: 28, backgroundColor: '#FF5722' }}>
+            <svg viewBox="0 0 24 24" style={{ width: 14, height: 14, fill: '#fff' }}>
+              <path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/>
+            </svg>
+          </div>
           <span className="font-bold text-sm tracking-widest" style={{ color: '#1A1A1A' }}>THE YARD</span>
-          <span className="mx-2" style={{ color: '#E8E6E3' }}>·</span>
+          <span className="mx-1" style={{ color: '#E8E6E3' }}>·</span>
           <span className="font-bold text-sm tracking-widest" style={{ color: '#FF5722' }}>RIG</span>
         </div>
         <Link href="/rig/profile" className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ backgroundColor: '#FF5722' }}>

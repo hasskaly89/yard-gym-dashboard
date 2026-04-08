@@ -1,6 +1,37 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import Link from 'next/link'
+
+const C = {
+  bg:      '#0F0E1F',
+  card:    '#1A1830',
+  cardAlt: '#201E38',
+  border:  'rgba(255,255,255,0.07)',
+  borderHi:'rgba(255,255,255,0.13)',
+  orange:  '#FF5C3E',
+  white:   '#FFFFFF',
+  dim:     'rgba(255,255,255,0.45)',
+  dimmer:  'rgba(255,255,255,0.22)',
+  green:   '#00C896',
+  purple:  '#7C6FFF',
+  teal:    '#00C9A7',
+}
+
+const LIFTS = ['squat', 'bench', 'deadlift'] as const
+type Lift = typeof LIFTS[number]
+
+const LIFT_META: Record<Lift, { abbr: string; hue: string; label: string }> = {
+  squat:    { abbr: 'S', hue: '#FF5C3E', label: 'Squat' },
+  bench:    { abbr: 'B', hue: '#7C6FFF', label: 'Bench' },
+  deadlift: { abbr: 'D', hue: '#00C9A7', label: 'Deadlift' },
+}
+
+async function handleSignOut() {
+  'use server'
+  const { createClient } = await import('@/lib/supabase/server')
+  const supabase = await createClient()
+  await supabase.auth.signOut()
+  redirect('/login')
+}
 
 export default async function RigProfilePage() {
   const supabase = await createClient()
@@ -11,140 +42,418 @@ export default async function RigProfilePage() {
   const role = (user.user_metadata?.role ?? 'member') as string
 
   let member: any = null
-  let threeRMs: any[] = []
-  let allPRs: any[] = []
-  let liftHistory: any[] = []
+  let threeRMs: { lift: string; weight_kg: number }[] = []
+  let allPRs: { lift: string; weight_kg: number; logged_at: string }[] = []
+  let liftHistory: { lift: string; weight_kg: number; reps_completed: number | null; is_pr: boolean; logged_at: string; week_number: number | null }[] = []
 
   if (role === 'member') {
+    // 1. Member record
     const { data: m } = await supabase
       .from('rig_members')
-      .select('*')
+      .select('id, first_name, last_name, email, photo_url')
       .eq('email', user.email!)
       .single()
 
     member = m
 
     if (m) {
-      const { data: rms } = await supabase
-        .from('rig_three_rms')
-        .select('lift, weight_kg, updated_at')
-        .eq('member_id', m.id)
-        .order('lift')
+      // 2. Active block
+      const { data: block } = await supabase
+        .from('rig_blocks')
+        .select('id, name, current_week, type')
+        .eq('is_active', true)
+        .single()
 
-      threeRMs = rms || []
+      if (block) {
+        // 3. Member's 3RMs for active block
+        const { data: rms } = await supabase
+          .from('rig_member_maxes')
+          .select('rm3, rig_lifts!lift_id(slug)')
+          .eq('member_id', m.id)
+          .eq('block_id', block.id)
 
+        threeRMs = ((rms as any[]) || []).map(r => ({
+          lift: (r.rig_lifts as any)?.slug ?? '',
+          weight_kg: r.rm3,
+        }))
+      }
+
+      // 4. All-time PRs (last 10)
       const { data: prs } = await supabase
-        .from('rig_lifts')
-        .select('lift, weight_kg, logged_at')
+        .from('rig_lift_results')
+        .select('actual_weight, logged_at, rig_lifts!lift_id(slug)')
         .eq('member_id', m.id)
         .eq('is_pr', true)
         .order('logged_at', { ascending: false })
         .limit(10)
 
-      allPRs = prs || []
+      allPRs = ((prs as any[]) || []).map(r => ({
+        lift: (r.rig_lifts as any)?.slug ?? '',
+        weight_kg: r.actual_weight,
+        logged_at: r.logged_at,
+      }))
 
+      // 5. Lift history (last 15)
       const { data: history } = await supabase
-        .from('rig_lifts')
-        .select('lift, weight_kg, week_number, logged_at, is_pr, rig_blocks(name)')
+        .from('rig_lift_results')
+        .select('actual_weight, reps_completed, is_pr, logged_at, rig_lifts!lift_id(slug), rig_block_weeks!block_week_id(week_number)')
         .eq('member_id', m.id)
         .order('logged_at', { ascending: false })
-        .limit(20)
+        .limit(15)
 
-      liftHistory = history || []
+      liftHistory = ((history as any[]) || []).map(l => ({
+        lift: (l.rig_lifts as any)?.slug ?? '',
+        weight_kg: l.actual_weight,
+        reps_completed: l.reps_completed ?? null,
+        is_pr: l.is_pr,
+        logged_at: l.logged_at,
+        week_number: (l.rig_block_weeks as any)?.week_number ?? null,
+      }))
     }
   }
 
   const displayName = member
-    ? `${member.first_name} ${member.last_name}`
+    ? `${member.first_name} ${member.last_name}`.trim()
     : user.email?.split('@')[0] ?? 'User'
 
-  const initials = displayName.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+  const initials = displayName
+    .split(' ')
+    .map((n: string) => n[0] ?? '')
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
 
-  async function handleSignOut() {
-    'use server'
-    const supabase = await createClient()
-    await supabase.auth.signOut()
-    redirect('/login')
-  }
+  // Filter 3RMs to only known lift slugs, in order
+  const orderedRMs = LIFTS
+    .map(lift => {
+      const rm = threeRMs.find(r => r.lift === lift)
+      return rm ? { lift, weight_kg: rm.weight_kg } : null
+    })
+    .filter(Boolean) as { lift: Lift; weight_kg: number }[]
 
   return (
-    <div className="px-4 py-6 space-y-6">
-      {/* Profile header */}
-      <div className="bg-white rounded-2xl p-6 border text-center" style={{ borderColor: '#E8E6E3' }}>
-        <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-3 text-2xl font-bold text-white" style={{ backgroundColor: '#FF5722' }}>
+    <div style={{ backgroundColor: C.bg, margin: '-20px -16px', padding: '24px 16px', paddingBottom: 96 }}>
+
+      {/* Section 1 — Profile card */}
+      <div
+        style={{
+          backgroundColor: C.card,
+          borderRadius: 20,
+          padding: '28px 20px',
+          border: `1px solid ${C.border}`,
+          textAlign: 'center',
+          marginBottom: 24,
+        }}
+      >
+        {/* Avatar */}
+        <div
+          style={{
+            width: 80,
+            height: 80,
+            borderRadius: '50%',
+            backgroundColor: C.orange + '22',
+            border: `3px solid ${C.orange}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 14px',
+            color: C.orange,
+            fontWeight: 900,
+            fontSize: 28,
+          }}
+        >
           {initials}
         </div>
-        <h1 className="text-xl font-bold" style={{ color: '#1A1A1A' }}>{displayName}</h1>
-        <p className="text-sm mt-1" style={{ color: '#888888' }}>{user.email}</p>
+
+        <h1 style={{ color: C.white, fontWeight: 900, fontSize: 22, margin: 0 }}>
+          {displayName}
+        </h1>
+        <p style={{ color: C.dim, fontSize: 13, marginTop: 6 }}>
+          {user.email}
+        </p>
+
+        {/* Role badge */}
         <span
-          className="inline-block mt-2 text-xs font-semibold px-3 py-1 rounded-full capitalize"
-          style={{ backgroundColor: '#FFF0EB', color: '#FF5722' }}
+          style={{
+            display: 'inline-block',
+            marginTop: 10,
+            padding: '4px 14px',
+            borderRadius: 99,
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: 'capitalize',
+            letterSpacing: '0.05em',
+            backgroundColor: role === 'admin' ? C.purple + '22' : C.orange + '22',
+            color: role === 'admin' ? C.purple : C.orange,
+            border: `1px solid ${role === 'admin' ? C.purple + '55' : C.orange + '55'}`,
+          }}
         >
           {role}
         </span>
       </div>
 
-      {/* 3RMs */}
-      {threeRMs.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: '#888888' }}>Your 3-Rep Maxes</h2>
-          <div className="grid grid-cols-3 gap-3">
-            {threeRMs.map(rm => (
-              <div key={rm.lift} className="bg-white rounded-2xl p-4 border text-center" style={{ borderColor: '#E8E6E3' }}>
-                <p className="text-xs font-semibold uppercase tracking-widest mb-1" style={{ color: '#888888' }}>{rm.lift}</p>
-                <p className="text-xl font-bold" style={{ color: '#FF5722' }}>{rm.weight_kg}</p>
-                <p className="text-xs" style={{ color: '#888888' }}>kg</p>
-              </div>
-            ))}
+      {/* Section 2 — 3-Rep Maxes */}
+      {orderedRMs.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <p
+            style={{
+              color: C.dim,
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              marginBottom: 12,
+            }}
+          >
+            3-Rep Maxes
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {orderedRMs.map(({ lift, weight_kg }) => {
+              const meta = LIFT_META[lift]
+              return (
+                <div
+                  key={lift}
+                  style={{
+                    backgroundColor: C.card,
+                    borderRadius: 16,
+                    padding: '16px 12px',
+                    border: `1px solid ${C.border}`,
+                    textAlign: 'center',
+                  }}
+                >
+                  {/* Lift abbr badge */}
+                  <div
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: '50%',
+                      backgroundColor: meta.hue + '22',
+                      border: `2px solid ${meta.hue}`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 8px',
+                      color: meta.hue,
+                      fontWeight: 900,
+                      fontSize: 13,
+                    }}
+                  >
+                    {meta.abbr}
+                  </div>
+                  {/* Big weight */}
+                  <p style={{ color: meta.hue, fontWeight: 900, fontSize: 24, margin: 0, lineHeight: 1 }}>
+                    {weight_kg}
+                  </p>
+                  <p style={{ color: C.dim, fontSize: 11, margin: '4px 0 0' }}>kg</p>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* PR History */}
+      {/* Section 3 — Personal Records */}
       {allPRs.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: '#888888' }}>PR History</h2>
-          <div className="space-y-2">
-            {allPRs.map((pr, i) => (
-              <div key={i} className="bg-white rounded-xl px-4 py-3 flex items-center justify-between border" style={{ borderColor: '#E8E6E3' }}>
-                <div>
-                  <span className="font-semibold capitalize" style={{ color: '#1A1A1A' }}>{pr.lift}</span>
-                  <span className="text-xs ml-2" style={{ color: '#888888' }}>
-                    {new Date(pr.logged_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+        <div style={{ marginBottom: 24 }}>
+          <p
+            style={{
+              color: C.dim,
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              marginBottom: 12,
+            }}
+          >
+            Personal Records
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {allPRs.map((pr, i) => {
+              const liftKey = pr.lift as Lift
+              const meta = LIFT_META[liftKey] ?? { abbr: pr.lift?.[0]?.toUpperCase() ?? '?', hue: C.orange, label: pr.lift }
+              return (
+                <div
+                  key={i}
+                  style={{
+                    backgroundColor: C.card,
+                    borderRadius: 12,
+                    padding: '12px 16px',
+                    border: `1px solid ${C.border}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  {/* Lift badge */}
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: '50%',
+                      backgroundColor: meta.hue + '22',
+                      border: `1.5px solid ${meta.hue}`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: meta.hue,
+                      fontWeight: 900,
+                      fontSize: 12,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {meta.abbr}
+                  </div>
+
+                  {/* Name + date */}
+                  <div style={{ flex: 1 }}>
+                    <span
+                      style={{
+                        color: C.white,
+                        fontWeight: 600,
+                        fontSize: 14,
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {pr.lift}
+                    </span>
+                    <span style={{ color: C.dimmer, fontSize: 12, marginLeft: 8 }}>
+                      {new Date(pr.logged_at).toLocaleDateString('en-AU', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </span>
+                  </div>
+
+                  {/* Weight */}
+                  <span style={{ color: meta.hue, fontWeight: 800, fontSize: 18, flexShrink: 0 }}>
+                    {pr.weight_kg} kg
                   </span>
                 </div>
-                <span className="font-bold" style={{ color: '#FF5722' }}>{pr.weight_kg} kg</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* Lift History */}
+      {/* Section 4 — Recent Lifts */}
       {liftHistory.length > 0 && (
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-widest mb-3" style={{ color: '#888888' }}>Recent Lifts</h2>
-          <div className="space-y-2">
-            {liftHistory.map((l, i) => (
-              <div key={i} className="bg-white rounded-xl px-4 py-3 flex items-center justify-between border" style={{ borderColor: '#E8E6E3' }}>
-                <div>
-                  <span className="font-semibold capitalize" style={{ color: '#1A1A1A' }}>{l.lift}</span>
-                  <span className="text-xs ml-2" style={{ color: '#888888' }}>Week {l.week_number}</span>
-                  {l.is_pr && <span className="ml-2 text-xs font-bold" style={{ color: '#FF5722' }}>PR</span>}
+        <div style={{ marginBottom: 24 }}>
+          <p
+            style={{
+              color: C.dim,
+              fontSize: 11,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.12em',
+              marginBottom: 12,
+            }}
+          >
+            Recent Lifts
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {liftHistory.map((l, i) => {
+              const liftKey = l.lift as Lift
+              const meta = LIFT_META[liftKey] ?? { abbr: l.lift?.[0]?.toUpperCase() ?? '?', hue: C.orange, label: l.lift }
+              return (
+                <div
+                  key={i}
+                  style={{
+                    backgroundColor: C.card,
+                    borderRadius: 12,
+                    padding: '12px 16px',
+                    border: `1px solid ${C.border}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                  }}
+                >
+                  {/* Lift badge */}
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: '50%',
+                      backgroundColor: meta.hue + '22',
+                      border: `1.5px solid ${meta.hue}`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: meta.hue,
+                      fontWeight: 900,
+                      fontSize: 12,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {meta.abbr}
+                  </div>
+
+                  {/* Name + week */}
+                  <div style={{ flex: 1 }}>
+                    <span
+                      style={{
+                        color: C.white,
+                        fontWeight: 600,
+                        fontSize: 14,
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {l.lift}
+                    </span>
+                    {l.week_number != null && (
+                      <span style={{ color: C.dimmer, fontSize: 12, marginLeft: 8 }}>
+                        Week {l.week_number}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Weight + PR badge */}
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ color: C.white, fontWeight: 700, fontSize: 16 }}>
+                      {l.weight_kg} kg
+                    </span>
+                    {l.is_pr && (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          marginLeft: 8,
+                          padding: '2px 7px',
+                          borderRadius: 6,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          backgroundColor: C.orange + '22',
+                          color: C.orange,
+                          border: `1px solid ${C.orange}44`,
+                          verticalAlign: 'middle',
+                        }}
+                      >
+                        PR
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="font-semibold" style={{ color: '#1A1A1A' }}>{l.weight_kg} kg</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* Sign out */}
+      {/* Section 5 — Sign Out */}
       <form action={handleSignOut}>
         <button
           type="submit"
-          className="w-full py-3 rounded-xl font-semibold border text-sm"
-          style={{ borderColor: '#E8E6E3', color: '#888888', backgroundColor: 'white' }}
+          style={{
+            width: '100%',
+            padding: '14px 20px',
+            borderRadius: 14,
+            backgroundColor: C.card,
+            border: `1px solid rgba(239,68,68,0.35)`,
+            color: 'rgba(239,68,68,0.7)',
+            fontWeight: 700,
+            fontSize: 15,
+            cursor: 'pointer',
+            textAlign: 'center',
+          }}
         >
           Sign Out
         </button>

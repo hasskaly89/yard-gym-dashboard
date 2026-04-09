@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 
 export default function LoginClient() {
   const [role, setRole] = useState<'member' | 'admin'>('member')
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
@@ -28,9 +29,15 @@ export default function LoginClient() {
     setError('')
 
     if (role === 'member') {
+      const parts = name.trim().split(' ')
+      const firstName = parts[0] ?? ''
+      const lastName = parts.slice(1).join(' ')
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: `${location.origin}/auth/callback` },
+        options: {
+          emailRedirectTo: `${location.origin}/auth/callback`,
+          data: { role: 'member', first_name: firstName, last_name: lastName },
+        },
       })
       if (error) { setError(error.message); setLoading(false); return }
       setSuccess(true)
@@ -105,7 +112,7 @@ export default function LoginClient() {
                   {(['member', 'admin'] as const).map((r) => (
                     <button
                       key={r}
-                      onClick={() => { setRole(r); setError('') }}
+                      onClick={() => { setRole(r); setError(''); setName('') }}
                       className="rig-role-btn flex-1"
                       style={{
                         padding: '10px 12px',
@@ -124,6 +131,31 @@ export default function LoginClient() {
                     </button>
                   ))}
                 </div>
+
+                {/* Full Name — members only */}
+                {role === 'member' && (
+                  <>
+                    <label style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: '#888', display: 'block', marginBottom: 8 }}>
+                      Full Name
+                    </label>
+                    <input
+                      className="rig-input"
+                      type="text"
+                      placeholder="Jane Smith"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                      style={{
+                        width: '100%', height: 52, backgroundColor: '#F8F7F5',
+                        border: '1.5px solid #E8E6E3', borderRadius: 14,
+                        padding: '0 16px', fontFamily: 'DM Sans, sans-serif',
+                        fontSize: 16, color: '#1A1A1A', outline: 'none',
+                        marginBottom: 12, boxSizing: 'border-box',
+                        transition: 'border-color 0.2s',
+                      }}
+                    />
+                  </>
+                )}
 
                 {/* Email */}
                 <label style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: '#888', display: 'block', marginBottom: 8 }}>
@@ -221,7 +253,7 @@ export default function LoginClient() {
                   ✉️
                 </div>
                 <div className="rig-heading" style={{ fontSize: 26, letterSpacing: 2, color: '#1A1A1A', marginBottom: 10 }}>
-                  CHECK YOUR EMAIL
+                  {name ? `LET'S GO, ${name.split(' ')[0].toUpperCase()}!` : 'CHECK YOUR EMAIL'}
                 </div>
                 <p style={{ fontSize: 14, color: '#888', lineHeight: 1.6 }}>
                   We&apos;ve sent a login link to <strong>{email}</strong>.<br />Tap it to access your RIG Calculator.

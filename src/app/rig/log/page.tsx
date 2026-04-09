@@ -9,14 +9,12 @@ import confetti from 'canvas-confetti'
 const LIFTS = ['squat', 'bench', 'deadlift'] as const
 type Lift = typeof LIFTS[number]
 
-// Wodify-style: each lift gets its own colour identity
 const LIFT_META: Record<Lift, { label: string; abbr: string; hue: string }> = {
   squat:    { label: 'Squat',    abbr: 'S', hue: '#FF5C3E' },
   bench:    { label: 'Bench',    abbr: 'B', hue: '#7C6FFF' },
   deadlift: { label: 'Deadlift', abbr: 'D', hue: '#00C9A7' },
 }
 
-// Dark palette
 const C = {
   bg:       '#0F0E1F',
   card:     '#1A1830',
@@ -34,12 +32,29 @@ const C = {
 
 interface ThreeRM { lift: Lift; weight_kg: number }
 interface LoggedLift { lift: Lift; weight_kg: number; reps: number; is_pr: boolean }
+interface HistoryEntry { weight: number; date: string; reps: number | null }
 
 function Tick({ size = 16, color = '#fff' }: { size?: number; color?: string }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
       stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+function Sparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null
+  const W = 80, H = 28
+  const min = Math.min(...data), max = Math.max(...data)
+  const range = max - min || 1
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * W},${H - 4 - ((v - min) / range) * (H - 8)}`).join(' ')
+  const lastPt = pts.split(' ').pop()!
+  const [lx, ly] = lastPt.split(',').map(Number)
+  return (
+    <svg width={W} height={H} style={{ display: 'block' }}>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity={0.5} />
+      <circle cx={lx} cy={ly} r={3} fill={color} />
     </svg>
   )
 }
@@ -56,8 +71,28 @@ export default function RigLogPage() {
   const [tab, setTab] = useState<'log' | '3rm'>('log')
   const [weights, setWeights] = useState<Record<Lift, string>>({ squat: '', bench: '', deadlift: '' })
   const [rmInputs, setRmInputs] = useState<Record<Lift, string>>({ squat: '', bench: '', deadlift: '' })
+  const [unit, setUnit] = useState<'kg' | 'lb'>('kg')
+  const [liftHistory, setLiftHistory] = useState<Record<Lift, HistoryEntry[]>>({ squat: [], bench: [], deadlift: [] })
+  const [showHistory, setShowHistory] = useState<Record<Lift, boolean>>({ squat: false, bench: false, deadlift: false })
 
-  useEffect(() => { loadData() }, [])
+  // Convert kg → display unit
+  function toDisplay(kg: number): number {
+    return unit === 'lb' ? Math.round(kg * 2.205) : kg
+  }
+
+  // Convert display unit → kg
+  function fromDisplay(val: number): number {
+    if (unit === 'lb') {
+      return Math.round((val / 2.205) * 2) / 2
+    }
+    return roundToPlate(val)
+  }
+
+  useEffect(() => {
+    const saved = localStorage.getItem('rig_unit')
+    if (saved === 'lb') setUnit('lb')
+    loadData()
+  }, [])
 
   async function loadData() {
     setLoading(true)
@@ -97,16 +132,37 @@ export default function RigLogPage() {
         })).filter(l => l.lift) || []
       )
     }
+
+    // Fetch performance history
+    const { data: histData } = await supabase
+      .from('rig_lift_results')
+      .select('actual_weight, reps_completed, logged_at, rig_lifts!lift_id(slug)')
+      .eq('member_id', m.id)
+      .order('logged_at', { ascending: true })
+      .limit(60)
+    const histMap: Record<Lift, HistoryEntry[]> = { squat: [], bench: [], deadlift: [] }
+    for (const h of (histData as any[] || [])) {
+      const slug = (h.rig_lifts as any)?.slug as Lift
+      if (slug && histMap[slug]) {
+        histMap[slug].push({ weight: h.actual_weight, date: h.logged_at, reps: h.reps_completed ?? null })
+      }
+    }
+    setLiftHistory(histMap)
+
     setLoading(false)
   }
 
   async function logLift(lift: Lift) {
     if (!block || !memberId) return
-    const rawWeight = parseFloat(weights[lift])
-    if (!rawWeight || rawWeight <= 0) return
+    const rawDisplayWeight = parseFloat(weights[lift])
+    if (!rawDisplayWeight || rawDisplayWeight <= 0) return
 
     setSaving(lift); setSaveError(null)
-    const weight = roundToPlate(rawWeight)
+
+    // Convert from display unit back to kg before saving
+    const weightKg = fromDisplay(rawDisplayWeight)
+    const weight = roundToPlate(weightKg)
+
     const currentRM = threeRMs.find(r => r.lift === lift)?.weight_kg ?? 0
     const blockType = (block.block_type as BlockType) || 'signature'
     const wkCfg = BLOCK_CONFIGS[blockType].weeks.find(w => w.week === block.current_week) ?? BLOCK_CONFIGS[blockType].weeks[0]
@@ -147,7 +203,10 @@ export default function RigLogPage() {
     if (!raw || raw <= 0) return
 
     setSaving(lift); setSaveError(null)
-    const weight = roundToPlate(raw)
+
+    // Convert from display unit back to kg before saving
+    const weightKg = fromDisplay(raw)
+    const weight = roundToPlate(weightKg)
 
     const { data: liftRow, error: liftErr } = await supabase.from('rig_lifts').select('id').eq('slug', lift).single()
     if (!liftRow) { setSaveError(liftErr?.message || `Could not find "${lift}".`); setSaving(null); return }
@@ -193,6 +252,7 @@ export default function RigLogPage() {
   const totalWeeks = blockCfg.durationWeeks
   const loggedCount = LIFTS.filter(l => weekLifts.find(wl => wl.lift === l)).length
   const allDone = loggedCount === LIFTS.length
+  const unitLabel = unit
 
   return (
     <div style={{ padding: '24px 16px 8px' }}>
@@ -203,10 +263,27 @@ export default function RigLogPage() {
           <p className="text-xs font-bold tracking-widest uppercase" style={{ color: C.dim }}>
             {block.name}
           </p>
-          <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-            style={{ backgroundColor: phaseColor + '22', color: phaseColor, border: `1px solid ${phaseColor}44` }}>
-            {weekCfg.phase}
-          </span>
+          <div className="flex items-center gap-2">
+            {/* Unit toggle pill */}
+            <button
+              onClick={() => {
+                const next = unit === 'kg' ? 'lb' : 'kg'
+                setUnit(next)
+                localStorage.setItem('rig_unit', next)
+              }}
+              style={{
+                padding: '4px 12px', borderRadius: 99, fontSize: 11, fontWeight: 700,
+                backgroundColor: 'rgba(255,255,255,0.07)', color: C.dim,
+                border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer',
+              }}
+            >
+              {unit === 'kg' ? 'kg → lb' : 'lb → kg'}
+            </button>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full"
+              style={{ backgroundColor: phaseColor + '22', color: phaseColor, border: `1px solid ${phaseColor}44` }}>
+              {weekCfg.phase}
+            </span>
+          </div>
         </div>
 
         <h1 className="font-black text-2xl leading-tight" style={{ color: C.white }}>
@@ -303,13 +380,16 @@ export default function RigLogPage() {
           )}
 
           {LIFTS.map(lift => {
-            const rm     = threeRMs.find(r => r.lift === lift)
-            const target = rm ? calcTarget(rm.weight_kg, block.current_week, blockType) : null
-            const logged = weekLifts.find(l => l.lift === lift)
-            const meta   = LIFT_META[lift]
-            const displayWeight = logged?.weight_kg ?? target
-            const pct = rm && displayWeight ? Math.round((displayWeight / rm.weight_kg) * 100) : null
+            const rm      = threeRMs.find(r => r.lift === lift)
+            const target  = rm ? calcTarget(rm.weight_kg, block.current_week, blockType) : null
+            const logged  = weekLifts.find(l => l.lift === lift)
+            const meta    = LIFT_META[lift]
+            const displayWeightKg = logged?.weight_kg ?? target
+            const pct = rm && displayWeightKg ? Math.round((displayWeightKg / rm.weight_kg) * 100) : null
             const diff = logged && target ? +(logged.weight_kg - target).toFixed(1) : null
+            const history = liftHistory[lift]
+            const sparkData = history.map(h => h.weight)
+            const recentHistory = history.slice(-5)
 
             return (
               <div key={lift} className="rounded-2xl overflow-hidden"
@@ -360,8 +440,12 @@ export default function RigLogPage() {
                   </div>
 
                   {/* Big weight display — Wodify-style */}
-                  {displayWeight ? (
+                  {displayWeightKg ? (
                     <div className="mb-3">
+                      {/* Sets × Reps label */}
+                      <p style={{ fontSize: 13, color: C.dimmer, fontWeight: 600, marginBottom: 2 }}>
+                        3 × {weekCfg.reps} @
+                      </p>
                       <div className="flex items-end gap-1 leading-none">
                         <span className="font-black"
                           style={{
@@ -370,13 +454,13 @@ export default function RigLogPage() {
                             color: logged ? (logged.is_pr ? meta.hue : C.white) : C.orange,
                             letterSpacing: '-2px',
                           }}>
-                          {displayWeight}
+                          {toDisplay(displayWeightKg)}
                         </span>
-                        <span className="font-bold mb-2 text-base" style={{ color: C.dim }}>kg</span>
+                        <span className="font-bold mb-2 text-base" style={{ color: C.dim }}>{unitLabel}</span>
                         {diff !== null && diff !== 0 && (
                           <span className="font-bold mb-2 text-sm ml-1"
                             style={{ color: diff > 0 ? C.green : C.orange }}>
-                            {diff > 0 ? `+${diff}` : diff}
+                            {diff > 0 ? `+${toDisplay(diff)}` : toDisplay(diff)}
                           </span>
                         )}
                       </div>
@@ -411,17 +495,23 @@ export default function RigLogPage() {
                         />
                       </div>
                       <p className="text-xs mt-1 font-semibold" style={{ color: C.dimmer }}>
-                        {pct}% of 3RM{rm ? ` · 3RM: ${rm.weight_kg} kg` : ''}
+                        {pct}% of 3RM{rm ? ` · 3RM: ${toDisplay(rm.weight_kg)} ${unitLabel}` : ''}
                       </p>
                     </div>
                   )}
                 </div>
 
                 {/* Input row */}
-                <div className="px-4 pb-4 flex gap-2">
+                <div className="px-4 pb-3 flex gap-2">
                   <input
                     type="number" inputMode="decimal"
-                    placeholder={logged ? `${logged.weight_kg}` : target ? `${target}` : 'kg'}
+                    placeholder={
+                      logged
+                        ? `${toDisplay(logged.weight_kg)}`
+                        : target
+                        ? `${toDisplay(target)}`
+                        : unitLabel
+                    }
                     value={weights[lift]}
                     onChange={e => setWeights(prev => ({ ...prev, [lift]: e.target.value }))}
                     className="flex-1 px-3 rounded-xl outline-none font-bold"
@@ -446,6 +536,54 @@ export default function RigLogPage() {
                   >
                     {saving === lift ? '...' : logged ? 'Update' : 'Log it'}
                   </button>
+                </div>
+
+                {/* View history toggle */}
+                <div className="px-4 pb-4">
+                  <button
+                    onClick={() => setShowHistory(prev => ({ ...prev, [lift]: !prev[lift] }))}
+                    style={{
+                      background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', gap: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>
+                      {showHistory[lift] ? 'Hide history' : 'View history'}
+                    </span>
+                    {sparkData.length >= 2 && (
+                      <Sparkline data={sparkData} color={meta.hue} />
+                    )}
+                  </button>
+
+                  {showHistory[lift] && (
+                    <div className="mt-3 space-y-1">
+                      {recentHistory.length === 0 ? (
+                        <p style={{ fontSize: 12, color: C.dimmer }}>No history yet.</p>
+                      ) : (
+                        recentHistory.map((entry, idx) => {
+                          const dateStr = new Date(entry.date).toLocaleDateString('en-AU', {
+                            day: 'numeric', month: 'short',
+                          })
+                          return (
+                            <div key={idx}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                padding: '6px 10px', borderRadius: 10,
+                                backgroundColor: 'rgba(255,255,255,0.04)',
+                              }}>
+                              <span style={{ fontSize: 11, color: C.dimmer, minWidth: 52 }}>{dateStr}</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: C.white }}>
+                                {toDisplay(entry.weight)} {unitLabel}
+                              </span>
+                              {entry.reps !== null && (
+                                <span style={{ fontSize: 11, color: C.dimmer }}>× {entry.reps}</span>
+                              )}
+                            </div>
+                          )
+                        })
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )
@@ -496,9 +634,9 @@ export default function RigLogPage() {
                     <div className="mb-3">
                       <div className="flex items-end gap-1 leading-none">
                         <span className="font-black" style={{ fontSize: 48, lineHeight: 1, color: meta.hue, letterSpacing: '-2px' }}>
-                          {current.weight_kg}
+                          {toDisplay(current.weight_kg)}
                         </span>
-                        <span className="font-bold mb-1.5 text-base" style={{ color: C.dim }}>kg</span>
+                        <span className="font-bold mb-1.5 text-base" style={{ color: C.dim }}>{unitLabel}</span>
                       </div>
                       <p className="text-sm font-semibold" style={{ color: C.dim }}>Current 3RM</p>
                     </div>
@@ -512,7 +650,7 @@ export default function RigLogPage() {
                 <div className="px-4 pb-4 flex gap-2">
                   <input
                     type="number" inputMode="decimal"
-                    placeholder={current ? `Update (${current.weight_kg} kg)` : 'Enter 3RM in kg'}
+                    placeholder={current ? `Update (${toDisplay(current.weight_kg)} ${unitLabel})` : `Enter 3RM in ${unitLabel}`}
                     value={rmInputs[lift]}
                     onChange={e => setRmInputs(prev => ({ ...prev, [lift]: e.target.value }))}
                     className="flex-1 px-3 rounded-xl outline-none font-bold"

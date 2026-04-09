@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { redirect } from 'next/navigation'
 
 const C = {
@@ -47,8 +48,9 @@ export default async function RigProfilePage() {
   let liftHistory: { lift: string; weight_kg: number; reps_completed: number | null; is_pr: boolean; logged_at: string; week_number: number | null }[] = []
 
   if (role === 'member') {
-    // 1. Member record
-    const { data: m } = await supabase
+    // 1. Member record — use admin client to bypass RLS
+    const admin = createAdminClient()
+    const { data: m } = await admin
       .from('rig_members')
       .select('id, first_name, last_name, email, photo_url')
       .eq('email', user.email!)

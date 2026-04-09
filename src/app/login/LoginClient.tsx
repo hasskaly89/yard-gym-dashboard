@@ -16,8 +16,25 @@ export default function LoginClient() {
   const searchParams = useSearchParams()
 
   useEffect(() => {
-    if (searchParams.get('error') === 'not_found') {
-      setError("We couldn't find your membership. Please speak to a coach at The Yard.")
+    // Check URL search params
+    const errParam = searchParams.get('error')
+    if (errParam === 'not_found') {
+      setError("We couldn't find your membership. Enter your name and email below to sign up.")
+    } else if (errParam === 'auth') {
+      setError('Something went wrong. Please request a new link.')
+    } else if (errParam === 'no-role') {
+      setError('Account not set up correctly. Please contact The Yard.')
+    }
+
+    // Check URL hash for Supabase error responses (e.g. expired OTP)
+    const hash = window.location.hash
+    if (hash.includes('error_code=otp_expired') || hash.includes('otp_expired')) {
+      setError('Your login link expired — just enter your details again to get a fresh one.')
+      // Clean the hash from the URL without reloading
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    } else if (hash.includes('error=access_denied')) {
+      setError('That link is no longer valid. Enter your email below to get a new one.')
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
     }
   }, [searchParams])
 

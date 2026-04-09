@@ -13,25 +13,31 @@ export default async function RigLayout({ children }: { children: React.ReactNod
 
   let memberData = null
   if (role === 'member') {
-    const { data } = await supabase
+    const admin = createAdminClient()
+
+    // Try to find existing record
+    const { data: existing } = await admin
       .from('rig_members')
       .select('*')
       .eq('email', user.email!)
       .single()
 
-    if (!data) {
-      // Auto-create the member record so they don't get stuck in a redirect loop
-      const admin = createAdminClient()
-      const firstName = (user.user_metadata?.first_name ?? user.email!.split('@')[0]) as string
+    if (existing) {
+      memberData = existing
+    } else {
+      // Create it — pull name from user_metadata if available
+      const firstName = (user.user_metadata?.first_name ?? '') as string
       const lastName = (user.user_metadata?.last_name ?? '') as string
       const { data: created } = await admin
         .from('rig_members')
-        .upsert({ email: user.email!, first_name: firstName, last_name: lastName }, { onConflict: 'email' })
+        .insert({
+          email: user.email!,
+          first_name: firstName,
+          last_name: lastName,
+        })
         .select()
         .single()
       memberData = created
-    } else {
-      memberData = data
     }
   }
 

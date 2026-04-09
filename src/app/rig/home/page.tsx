@@ -1,8 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { redirect } from 'next/navigation'
 import { calcTarget, BLOCK_CONFIGS } from '@/lib/rig/weights'
 import type { BlockType } from '@/lib/rig/weights'
 import Link from 'next/link'
+import ProfileSetupClient from './ProfileSetupClient'
 
 const C = {
   bg:      '#0F0E1F',
@@ -45,8 +47,9 @@ export default async function RigHomePage() {
     .eq('is_active', true)
     .single()
 
-  // 2. Member record
-  const { data: m } = await supabase
+  // 2. Member record — use admin client to bypass RLS
+  const admin = createAdminClient()
+  const { data: m } = await admin
     .from('rig_members')
     .select('id, first_name, last_name, email, photo_url')
     .eq('email', user.email!)
@@ -116,15 +119,15 @@ export default async function RigHomePage() {
 
   const doneCount = LIFTS.filter(lift => weekLifts.some(l => l.lift === lift)).length
 
-  // Loading / no member state
+  // No member record yet — show profile setup
   if (!m) {
-    return (
-      <div style={{ minHeight: '60vh' }}>
-        <div style={{ padding: '40px 24px', textAlign: 'center' }}>
-          <p style={{ color: C.dim, fontSize: 14 }}>Member record not found.</p>
-        </div>
-      </div>
-    )
+    return <ProfileSetupClient email={user.email!} memberId="" />
+  }
+
+  // Member exists but hasn't set their name — show profile setup
+  const needsSetup = !m.first_name || m.first_name.trim() === ''
+  if (needsSetup) {
+    return <ProfileSetupClient email={user.email!} memberId={m.id} />
   }
 
   return (

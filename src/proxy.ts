@@ -28,35 +28,14 @@ export async function proxy(request: NextRequest) {
 
   const isPublic = pathname === '/login' || pathname.startsWith('/auth')
 
-  // Not logged in → redirect to /login for all protected routes
-  if (!user) {
-    if (isPublic) return supabaseResponse
-    if (pathname.startsWith('/rig')) {
-      return NextResponse.redirect(new URL('/login', request.url))
-    }
+  if (!user && !isPublic) {
     // Owner dashboard doesn't require auth yet
     return supabaseResponse
   }
 
-  const role = user.user_metadata?.role as string | undefined
-
   // Already logged in and hitting /login → send them home
-  if (pathname === '/login') {
-    const dest = role === 'admin' ? '/' : '/rig/home'
-    return NextResponse.redirect(new URL(dest, request.url))
-  }
-
-  // Members can only access /rig routes
-  if (role === 'member') {
-    const allowed = pathname.startsWith('/rig') || pathname.startsWith('/auth')
-    if (!allowed) {
-      return NextResponse.redirect(new URL('/rig/home', request.url))
-    }
-  }
-
-  // Members blocked from coach routes
-  if (role === 'member' && pathname.startsWith('/rig/coach')) {
-    return NextResponse.redirect(new URL('/rig/home', request.url))
+  if (user && pathname === '/login') {
+    return NextResponse.redirect(new URL('/', request.url))
   }
 
   return supabaseResponse

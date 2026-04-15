@@ -13,10 +13,11 @@ export default function LoginClient() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  const [mounted, setMounted] = useState(false)
   const searchParams = useSearchParams()
 
   useEffect(() => {
-    // Check URL search params
+    setMounted(true)
     const errParam = searchParams.get('error')
     if (errParam === 'not_found') {
       setError("We couldn't find your membership. Enter your name and email below to sign up.")
@@ -26,11 +27,9 @@ export default function LoginClient() {
       setError('Account not set up correctly. Please contact The Yard.')
     }
 
-    // Check URL hash for Supabase error responses (e.g. expired OTP)
     const hash = window.location.hash
     if (hash.includes('error_code=otp_expired') || hash.includes('otp_expired')) {
       setError('Your login link expired — just enter your details again to get a fresh one.')
-      // Clean the hash from the URL without reloading
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
     } else if (hash.includes('error=access_denied')) {
       setError('That link is no longer valid. Enter your email below to get a new one.')
@@ -66,229 +65,388 @@ export default function LoginClient() {
     setLoading(false)
   }
 
-  const routeMap = {
-    member: { icon: '🏋️', dest: 'RIG Calculator', path: '/rig/home' },
-    admin:  { icon: '⚡', dest: 'Full Dashboard',  path: '/' },
-  }
-  const route = routeMap[role]
-
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap');
-        .rig-page { font-family: 'DM Sans', sans-serif; }
-        .rig-heading { font-family: 'Bebas Neue', cursive; }
-        .rig-btn-submit:hover:not(:disabled) {
-          background: #E64A19 !important;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 24px rgba(255,87,34,0.3);
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+        .login-page {
+          font-family: 'DM Sans', sans-serif;
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+          overflow: hidden;
+          background: #0A0918;
         }
-        .rig-btn-submit:active { transform: translateY(0); }
-        .rig-input:focus { border-color: #FF5722 !important; background: #fff !important; }
-        .rig-role-btn { transition: all 0.2s; }
-        .card-fadein { animation: fadeUp 0.5s ease both; }
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
+
+        /* Animated background gradient orbs */
+        .login-page::before {
+          content: '';
+          position: absolute;
+          top: -30%;
+          left: -20%;
+          width: 600px;
+          height: 600px;
+          background: radial-gradient(circle, rgba(255,92,62,0.12) 0%, transparent 70%);
+          animation: float1 12s ease-in-out infinite;
+          pointer-events: none;
+        }
+        .login-page::after {
+          content: '';
+          position: absolute;
+          bottom: -20%;
+          right: -20%;
+          width: 500px;
+          height: 500px;
+          background: radial-gradient(circle, rgba(124,111,255,0.08) 0%, transparent 70%);
+          animation: float2 15s ease-in-out infinite;
+          pointer-events: none;
+        }
+
+        @keyframes float1 {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(40px, 30px); }
+        }
+        @keyframes float2 {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(-30px, -40px); }
+        }
+
+        .login-card {
+          animation: cardEnter 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+        @keyframes cardEnter {
+          from { opacity: 0; transform: translateY(32px) scale(0.96); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        .login-success {
+          animation: successPop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+        @keyframes successPop {
+          from { opacity: 0; transform: scale(0.9); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+
+        .login-input {
+          width: 100%;
+          height: 52px;
+          background: rgba(255,255,255,0.05);
+          border: 1.5px solid rgba(255,255,255,0.1);
+          border-radius: 14px;
+          padding: 0 16px;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 16px;
+          color: #fff;
+          outline: none;
+          box-sizing: border-box;
+          transition: all 0.25s;
+        }
+        .login-input:focus {
+          border-color: #FF5C3E;
+          background: rgba(255,92,62,0.06);
+          box-shadow: 0 0 0 3px rgba(255,92,62,0.1);
+        }
+        .login-input::placeholder {
+          color: rgba(255,255,255,0.25);
+        }
+
+        .login-btn {
+          width: 100%;
+          height: 54px;
+          border: none;
+          border-radius: 14px;
+          color: #fff;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 16px;
+          font-weight: 700;
+          cursor: pointer;
+          letter-spacing: 0.3px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          transition: all 0.25s;
+          position: relative;
+          overflow: hidden;
+        }
+        .login-btn:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 32px rgba(255,92,62,0.4);
+        }
+        .login-btn:active { transform: translateY(0); }
+        .login-btn:disabled { cursor: not-allowed; }
+
+        /* Shimmer effect on button */
+        .login-btn::after {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: -100%;
+          width: 100%;
+          height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+          transition: left 0.6s;
+        }
+        .login-btn:not(:disabled):hover::after {
+          left: 100%;
+        }
+
+        .role-tab {
+          flex: 1;
+          padding: 11px 12px;
+          border: none;
+          border-radius: 12px;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.25s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+
+        .field-label {
+          display: block;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          color: rgba(255,255,255,0.4);
+          margin-bottom: 8px;
+        }
+
+        .stat-pill {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          border-radius: 12px;
+          font-size: 12px;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.06);
         }
       `}</style>
 
-      <div className="rig-page min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden" style={{ backgroundColor: '#F8F7F5' }}>
+      <div className="login-page">
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 20px', position: 'relative', zIndex: 10 }}>
 
-        {/* Background glow */}
-        <div style={{
-          position: 'absolute', top: -120, left: '50%', transform: 'translateX(-50%)',
-          width: 500, height: 500, pointerEvents: 'none',
-          background: 'radial-gradient(circle, rgba(255,87,34,0.08) 0%, transparent 70%)',
-        }} />
+          <div className="login-card" style={{ width: '100%', maxWidth: 400, opacity: mounted ? 1 : 0 }}>
 
-        <div className="card-fadein w-full max-w-sm relative z-10">
-          {/* Logo */}
-          <div className="flex flex-col items-center mb-8">
-            <div className="flex items-center gap-2.5 mb-1">
-              <div className="flex items-center justify-center rounded-xl" style={{ width: 36, height: 36, backgroundColor: '#FF5722' }}>
-                <svg viewBox="0 0 24 24" style={{ width: 20, height: 20, fill: '#fff' }}>
+            {/* Logo */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 36 }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: 16,
+                background: 'linear-gradient(135deg, #FF5C3E, #FF7A5C)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 16,
+                boxShadow: '0 8px 32px rgba(255,92,62,0.3)',
+              }}>
+                <svg viewBox="0 0 24 24" style={{ width: 28, height: 28, fill: '#fff' }}>
                   <path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/>
                 </svg>
               </div>
-              <span className="rig-heading" style={{ fontSize: 28, letterSpacing: 3, color: '#1A1A1A', lineHeight: 1 }}>
-                THE <span style={{ color: '#FF5722' }}>YARD</span>
-              </span>
+              <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 34, letterSpacing: 5, color: '#fff', lineHeight: 1, margin: 0 }}>
+                THE <span style={{ color: '#FF5C3E' }}>YARD</span>
+              </h1>
+              <p style={{ fontSize: 11, letterSpacing: 4, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>
+                Strength Training Platform
+              </p>
             </div>
-            <span style={{ fontSize: 11, letterSpacing: 3, textTransform: 'uppercase', color: '#aaa' }}>
-              Gym Management Platform
-            </span>
-          </div>
 
-          {/* Card */}
-          <div className="bg-white" style={{ borderRadius: 28, padding: '40px 32px 36px', boxShadow: '0 2px 40px rgba(0,0,0,0.07)' }}>
-            {!success ? (
-              <>
-                {/* Role Toggle */}
-                <div className="flex gap-1 mb-7" style={{ backgroundColor: '#F3F2F0', borderRadius: 14, padding: 4 }}>
-                  {(['member', 'admin'] as const).map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => { setRole(r); setError(''); setName('') }}
-                      className="rig-role-btn flex-1"
-                      style={{
-                        padding: '10px 12px',
-                        border: 'none',
-                        borderRadius: 10,
-                        fontFamily: 'DM Sans, sans-serif',
-                        fontSize: 14,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        backgroundColor: role === r ? '#fff' : 'transparent',
-                        color: role === r ? '#1A1A1A' : '#888',
-                        boxShadow: role === r ? '0 1px 6px rgba(0,0,0,0.10)' : 'none',
-                      }}
-                    >
-                      {r === 'member' ? '🏋️ Member' : '⚡ Admin'}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Full Name — members only */}
-                {role === 'member' && (
-                  <>
-                    <label style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: '#888', display: 'block', marginBottom: 8 }}>
-                      Full Name
-                    </label>
-                    <input
-                      className="rig-input"
-                      type="text"
-                      placeholder="Jane Smith"
-                      value={name}
-                      onChange={e => setName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                      style={{
-                        width: '100%', height: 52, backgroundColor: '#F8F7F5',
-                        border: '1.5px solid #E8E6E3', borderRadius: 14,
-                        padding: '0 16px', fontFamily: 'DM Sans, sans-serif',
-                        fontSize: 16, color: '#1A1A1A', outline: 'none',
-                        marginBottom: 12, boxSizing: 'border-box',
-                        transition: 'border-color 0.2s',
-                      }}
-                    />
-                  </>
-                )}
-
-                {/* Email */}
-                <label style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: '#888', display: 'block', marginBottom: 8 }}>
-                  Email Address
-                </label>
-                <input
-                  className="rig-input"
-                  type="email"
-                  placeholder={role === 'member' ? 'your@email.com' : 'admin@theyardgym.com.au'}
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                  style={{
-                    width: '100%', height: 52, backgroundColor: '#F8F7F5',
-                    border: '1.5px solid #E8E6E3', borderRadius: 14,
-                    padding: '0 16px', fontFamily: 'DM Sans, sans-serif',
-                    fontSize: 16, color: '#1A1A1A', outline: 'none',
-                    marginBottom: 12, boxSizing: 'border-box',
-                    transition: 'border-color 0.2s',
-                  }}
-                />
-
-                {/* Admin password */}
-                {role === 'admin' && (
-                  <>
-                    <label style={{ fontSize: 12, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', color: '#888', display: 'block', marginBottom: 8 }}>
-                      Password
-                    </label>
-                    <div style={{ position: 'relative', marginBottom: 12 }}>
-                      <input
-                        className="rig-input"
-                        type={showPw ? 'text' : 'password'}
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                        style={{
-                          width: '100%', height: 52, backgroundColor: '#F8F7F5',
-                          border: '1.5px solid #E8E6E3', borderRadius: 14,
-                          padding: '0 48px 0 16px', fontFamily: 'DM Sans, sans-serif',
-                          fontSize: 16, color: '#1A1A1A', outline: 'none',
-                          boxSizing: 'border-box', transition: 'border-color 0.2s',
-                        }}
-                      />
+            {/* Card */}
+            <div style={{
+              background: 'rgba(255,255,255,0.04)',
+              backdropFilter: 'blur(20px)',
+              WebkitBackdropFilter: 'blur(20px)',
+              borderRadius: 24,
+              padding: '32px 28px 28px',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}>
+              {!success ? (
+                <>
+                  {/* Role Toggle */}
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 28, padding: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 14 }}>
+                    {(['member', 'admin'] as const).map((r) => (
                       <button
-                        onClick={() => setShowPw(!showPw)}
-                        style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#bbb', fontSize: 18 }}
+                        key={r}
+                        onClick={() => { setRole(r); setError(''); setName('') }}
+                        className="role-tab"
+                        style={{
+                          background: role === r
+                            ? 'linear-gradient(135deg, rgba(255,92,62,0.2), rgba(255,92,62,0.1))'
+                            : 'transparent',
+                          color: role === r ? '#fff' : 'rgba(255,255,255,0.4)',
+                          border: role === r ? '1px solid rgba(255,92,62,0.3)' : '1px solid transparent',
+                        }}
                       >
-                        {showPw ? '🙈' : '👁️'}
+                        <span style={{ fontSize: 16 }}>{r === 'member' ? '🏋️' : '⚡'}</span>
+                        {r === 'member' ? 'Member' : 'Admin'}
                       </button>
+                    ))}
+                  </div>
+
+                  {/* Full Name — members only */}
+                  {role === 'member' && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label className="field-label">Full Name</label>
+                      <input
+                        className="login-input"
+                        type="text"
+                        placeholder="Jane Smith"
+                        value={name}
+                        onChange={e => setName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                      />
                     </div>
-                  </>
-                )}
+                  )}
 
-                {/* Hint */}
-                <p style={{ fontSize: 13, color: '#aaa', marginBottom: 24, lineHeight: 1.5, textAlign: 'center', marginTop: role === 'member' ? 0 : 12 }}>
-                  {role === 'member'
-                    ? <>We&apos;ll send a <strong style={{ color: '#888', fontWeight: 500 }}>magic link</strong> to your email — no password needed.</>
-                    : <>Sign in with your <strong style={{ color: '#888', fontWeight: 500 }}>staff credentials</strong> for full dashboard access.</>
-                  }
-                </p>
+                  {/* Email */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label className="field-label">Email Address</label>
+                    <input
+                      className="login-input"
+                      type="email"
+                      placeholder={role === 'member' ? 'your@email.com' : 'admin@theyardgym.com.au'}
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                    />
+                  </div>
 
-                {error && (
-                  <p style={{ fontSize: 13, color: '#EF4444', marginBottom: 16, textAlign: 'center' }}>{error}</p>
-                )}
+                  {/* Admin password */}
+                  {role === 'admin' && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label className="field-label">Password</label>
+                      <div style={{ position: 'relative' }}>
+                        <input
+                          className="login-input"
+                          type={showPw ? 'text' : 'password'}
+                          placeholder="Enter password"
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                          style={{ paddingRight: 48 }}
+                        />
+                        <button
+                          onClick={() => setShowPw(!showPw)}
+                          style={{
+                            position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            color: 'rgba(255,255,255,0.3)', fontSize: 16,
+                          }}
+                        >
+                          {showPw ? '🙈' : '👁️'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
-                {/* Submit */}
-                <button
-                  className="rig-btn-submit"
-                  onClick={handleSubmit}
-                  disabled={loading}
-                  style={{
-                    width: '100%', height: 54, backgroundColor: loading ? '#FFB09A' : '#FF5722',
-                    border: 'none', borderRadius: 14, color: '#fff',
-                    fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 600,
-                    cursor: loading ? 'not-allowed' : 'pointer', letterSpacing: 0.3,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {loading ? 'Signing you in...' : role === 'member' ? 'Send Login Link ✉️' : 'Sign In →'}
-                </button>
+                  {/* Hint */}
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', marginBottom: 24, lineHeight: 1.6, textAlign: 'center' }}>
+                    {role === 'member'
+                      ? <>We&apos;ll send a <strong style={{ color: 'rgba(255,255,255,0.5)' }}>magic link</strong> — no password needed.</>
+                      : <>Sign in with your <strong style={{ color: 'rgba(255,255,255,0.5)' }}>staff credentials</strong>.</>
+                    }
+                  </p>
 
-                {/* Route info */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: '#F3F2F0', borderRadius: 10, padding: '10px 14px', marginTop: 20, fontSize: 12, color: '#888' }}>
-                  <span>{route.icon}</span>
-                  <span>You&apos;ll be taken to</span>
-                  <span style={{ fontSize: 14, color: '#FF5722', fontWeight: 700 }}>→</span>
-                  <span style={{ fontWeight: 600, color: '#555' }}>{route.dest}</span>
+                  {error && (
+                    <div style={{
+                      fontSize: 13, color: '#FF6B6B', marginBottom: 16, textAlign: 'center',
+                      padding: '10px 14px', borderRadius: 12,
+                      background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.15)',
+                    }}>
+                      {error}
+                    </div>
+                  )}
+
+                  {/* Submit */}
+                  <button
+                    className="login-btn"
+                    onClick={handleSubmit}
+                    disabled={loading}
+                    style={{
+                      background: loading
+                        ? 'rgba(255,92,62,0.4)'
+                        : 'linear-gradient(135deg, #FF5C3E, #FF7A5C)',
+                      boxShadow: loading ? 'none' : '0 4px 20px rgba(255,92,62,0.3)',
+                    }}
+                  >
+                    {loading ? (
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{
+                          width: 18, height: 18, border: '2px solid rgba(255,255,255,0.3)',
+                          borderTopColor: '#fff', borderRadius: '50%',
+                          animation: 'spin 0.6s linear infinite', display: 'inline-block',
+                        }} />
+                        Signing you in...
+                      </span>
+                    ) : role === 'member' ? (
+                      'Send Login Link'
+                    ) : (
+                      'Sign In'
+                    )}
+                  </button>
+
+                  {/* Where you'll go */}
+                  <div className="stat-pill" style={{ marginTop: 20, justifyContent: 'center' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>
+                      {role === 'member' ? 'Opens' : 'Opens'}
+                    </span>
+                    <span style={{ color: '#FF5C3E', fontWeight: 700, fontSize: 13 }}>
+                      {role === 'member' ? 'RIG Calculator' : 'Full Dashboard'}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="login-success" style={{ textAlign: 'center', padding: '8px 0' }}>
+                  {/* Success checkmark animation */}
+                  <div style={{
+                    width: 72, height: 72, borderRadius: '50%',
+                    background: 'linear-gradient(135deg, rgba(0,200,150,0.15), rgba(0,200,150,0.05))',
+                    border: '2px solid rgba(0,200,150,0.3)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    margin: '0 auto 20px', fontSize: 32,
+                  }}>
+                    ✉️
+                  </div>
+                  <h2 style={{
+                    fontFamily: "'Bebas Neue', cursive", fontSize: 28, letterSpacing: 3,
+                    color: '#fff', marginBottom: 10, lineHeight: 1.2,
+                  }}>
+                    {name ? `LET'S GO, ${name.split(' ')[0].toUpperCase()}!` : 'CHECK YOUR EMAIL'}
+                  </h2>
+                  <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+                    We&apos;ve sent a login link to<br />
+                    <strong style={{ color: 'rgba(255,255,255,0.7)' }}>{email}</strong>
+                  </p>
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)', marginTop: 12 }}>
+                    Tap the link to open your RIG Calculator.
+                  </p>
+                  <button
+                    onClick={() => { setSuccess(false); setEmail('') }}
+                    style={{
+                      background: 'rgba(255,92,62,0.1)', border: '1px solid rgba(255,92,62,0.2)',
+                      color: '#FF5C3E', marginTop: 24, cursor: 'pointer',
+                      fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 12,
+                    }}
+                  >
+                    Back to login
+                  </button>
                 </div>
-              </>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                <div style={{ width: 64, height: 64, backgroundColor: 'rgba(34,197,94,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: 28 }}>
-                  ✉️
-                </div>
-                <div className="rig-heading" style={{ fontSize: 26, letterSpacing: 2, color: '#1A1A1A', marginBottom: 10 }}>
-                  {name ? `LET'S GO, ${name.split(' ')[0].toUpperCase()}!` : 'CHECK YOUR EMAIL'}
-                </div>
-                <p style={{ fontSize: 14, color: '#888', lineHeight: 1.6 }}>
-                  We&apos;ve sent a login link to <strong>{email}</strong>.<br />Tap it to access your RIG Calculator.
-                </p>
-                <button
-                  onClick={() => { setSuccess(false); setEmail('') }}
-                  style={{ background: 'none', border: 'none', color: '#FF5722', marginTop: 20, cursor: 'pointer', fontSize: 13 }}
-                >
-                  ← Back to login
-                </button>
-              </div>
-            )}
+              )}
+            </div>
+
+            <p style={{ marginTop: 28, fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', letterSpacing: 2 }}>
+              THE YARD GYM &middot; SYDNEY
+            </p>
           </div>
-
-          <p style={{ marginTop: 24, fontSize: 12, color: '#ccc', textAlign: 'center' }}>
-            The Yard Gym · Sydney · 2026
-          </p>
         </div>
+
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     </>
   )

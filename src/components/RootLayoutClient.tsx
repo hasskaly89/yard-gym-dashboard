@@ -4,9 +4,9 @@ import Sidebar from './Sidebar'
 
 export default function RootLayoutClient({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const isRig = pathname.startsWith('/rig') || pathname.startsWith('/login') || pathname.startsWith('/auth')
+  const isFullScreen = pathname.startsWith('/login') || pathname.startsWith('/auth')
 
-  if (isRig) {
+  if (isFullScreen) {
     return <>{children}</>
   }
 

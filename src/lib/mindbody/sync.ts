@@ -26,11 +26,14 @@ export async function syncMindBodyMembers() {
         phone: c.MobilePhone || null,
         photo_url: c.PhotoUrl || null,
         active: c.Active ?? true,
+        birth_date: c.BirthDate ? c.BirthDate.split('T')[0] : null,
+        membership_start_date: c.CreationDate ? c.CreationDate.split('T')[0] : null,
+        status: c.Active ? 'active' : 'inactive',
         last_synced_at: new Date().toISOString(),
       }))
 
     const { error } = await supabase
-      .from('rig_members')
+      .from('members')
       .upsert(rows, { onConflict: 'mindbody_client_id' })
 
     if (error) errors.push(error.message)

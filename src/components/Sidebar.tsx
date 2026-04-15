@@ -9,8 +9,8 @@ const navItems = [
   { label: "Xero", href: "/xero", icon: "₿" },
   { label: "Meta Ads", href: "/meta-ads", icon: "◉" },
   { label: "GoHighLevel", href: "/gohighlevel", icon: "▲" },
+  { label: "Milestones", href: "/milestones", icon: "🏆" },
   { label: "Timesheets", href: "/timesheets", icon: "◷" },
-  { label: "RIG Calculator", href: "/rig/home", icon: "🏋" },
 ];
 
 export default function Sidebar() {

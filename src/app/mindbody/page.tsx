@@ -2,40 +2,83 @@
 
 import { useEffect, useState } from 'react';
 
-interface MBClass {
-  Id: number;
-  ClassDescription: { Name: string };
-  StartDateTime: string;
-  TotalBooked: number;
-  MaxCapacity: number;
-  Staff: { Name: string };
-}
-
-interface MBClient {
-  Id: string;
-  FirstName: string;
-  LastName: string;
-  Email: string;
-  Status: string;
+interface MBCounts {
+  active: number;
+  intro: number;
+  introLast7Days: number;
+  classPacks: number;
+  declined: number;
 }
 
 interface MBData {
-  clients: { Clients: MBClient[]; TotalResults: number } | null;
-  classes: { Classes: MBClass[] } | null;
-  visits: { ClientVisits: unknown[]; TotalResults: number } | null;
+  counts: MBCounts;
   mock?: boolean;
-  apiPending?: boolean;
+  cached?: boolean;
+  refreshing?: boolean;
+  updatedAt?: string;
   error?: string;
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div className="bg-gym-surface border border-gym-border rounded-xl p-5">
-      <p className="text-gym-muted text-xs uppercase tracking-wider mb-1">{label}</p>
-      <p className="text-gym-text text-3xl font-bold">{value}</p>
-      {sub && <p className="text-gym-muted text-xs mt-1">{sub}</p>}
+// MindBody Business Portal (newer UI) report links.
+// Studio ID: 5741283
+const MB_REPORTS = {
+  active: 'https://clients.mindbodyonline.com/ASP/adm/adm_clt_srch.asp?studioid=5741283',
+  intro: 'https://clients.mindbodyonline.com/ASP/adm/adm_clt_srch.asp?studioid=5741283',
+  introLast7Days: 'https://clients.mindbodyonline.com/ASP/main_reports.asp?studioid=5741283',
+  classPacks: 'https://clients.mindbodyonline.com/ASP/adm/adm_clt_srch.asp?studioid=5741283',
+  declined: 'https://clients.mindbodyonline.com/ASP/main_reports.asp?studioid=5741283',
+};
+
+function StatCard({
+  label,
+  value,
+  sub,
+  color = 'green',
+  href,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  color?: 'green' | 'blue' | 'purple' | 'red' | 'yellow';
+  href?: string;
+}) {
+  const colorMap = {
+    green: 'text-green-400',
+    blue: 'text-blue-400',
+    purple: 'text-purple-400',
+    red: 'text-red-400',
+    yellow: 'text-yellow-400',
+  };
+
+  const inner = (
+    <div className="bg-gym-surface border border-gym-border rounded-xl p-6 h-full transition hover:border-gym-text/30 hover:bg-gym-surface/80">
+      <div className="flex items-start justify-between mb-2">
+        <p className="text-gym-muted text-xs uppercase tracking-wider">{label}</p>
+        {href && (
+          <svg
+            className="w-3.5 h-3.5 text-gym-muted"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        )}
+      </div>
+      <p className={`text-4xl font-bold ${colorMap[color]}`}>{value}</p>
+      {sub && <p className="text-gym-muted text-xs mt-2">{sub}</p>}
     </div>
   );
+
+  if (href) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="block">
+        {inner}
+      </a>
+    );
+  }
+
+  return inner;
 }
 
 export default function MindBodyPage() {
@@ -54,124 +97,78 @@ export default function MindBodyPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const totalClients = data?.clients?.TotalResults ?? 0;
-  const todaysClasses = data?.classes?.Classes ?? [];
-  const weeklyVisits = data?.visits?.TotalResults ?? 0;
+  const counts = data?.counts ?? { active: 0, intro: 0, introLast7Days: 0, classPacks: 0, declined: 0 };
 
   return (
     <div className="p-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gym-text">MindBody</h1>
-          <p className="text-gym-muted text-sm mt-1">Live member & class data</p>
+          <p className="text-gym-muted text-sm mt-1">Membership overview · click any card to open the MindBody report</p>
         </div>
-        <span className={`text-xs px-3 py-1 rounded-full font-medium ${
-          loading ? 'bg-yellow-500/10 text-yellow-400' :
-          data?.apiPending ? 'bg-yellow-500/10 text-yellow-400' :
-          data?.mock ? 'bg-blue-500/10 text-blue-400' :
-          'bg-green-500/10 text-green-400'
-        }`}>
-          {loading ? 'Connecting…' : data?.apiPending ? 'Approval Pending' : data?.mock ? 'Sample Data' : 'Live'}
+        <span
+          className={`text-xs px-3 py-1 rounded-full font-medium ${
+            loading
+              ? 'bg-yellow-500/10 text-yellow-400'
+              : error
+                ? 'bg-red-500/10 text-red-400'
+                : data?.mock
+                  ? 'bg-blue-500/10 text-blue-400'
+                  : 'bg-green-500/10 text-green-400'
+          }`}
+        >
+          {loading ? 'Loading…' : error ? 'Error' : data?.mock ? 'No API Key' : 'Live'}
         </span>
       </div>
 
-      {/* API pending approval notice */}
-      {data?.apiPending && (
-        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 mb-6 flex items-start gap-3">
-          <span className="text-yellow-400 text-lg">⏳</span>
-          <div>
-            <p className="text-yellow-400 font-semibold text-sm">MindBody API Approval Pending</p>
-            <p className="text-gym-muted text-xs mt-0.5">
-              Your developer account is awaiting MindBody approval. Showing sample data for now — this will update automatically once approved.
-            </p>
-          </div>
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-6">
+          <p className="text-red-400 text-sm">{error}</p>
         </div>
       )}
 
-      {/* Mock data notice */}
-      {data?.mock && !data?.apiPending && (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mb-6 flex items-start gap-3">
-          <span className="text-blue-400 text-lg">ℹ️</span>
-          <div>
-            <p className="text-blue-400 font-semibold text-sm">Sample Data</p>
-            <p className="text-gym-muted text-xs mt-0.5">
-              Add your MindBody API key to see live gym data.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <StatCard
-          label="Total Members"
-          value={loading ? '—' : totalClients.toLocaleString()}
-          sub="Active clients"
+          label="Active Members"
+          value={loading ? '—' : counts.active}
+          sub="Foundation T1 & T2, TYG, VIP, Black Friday"
+          color="green"
+          href={MB_REPORTS.active}
         />
         <StatCard
-          label="Today's Classes"
-          value={loading ? '—' : todaysClasses.length}
-          sub="Scheduled today"
+          label="Intro Offers"
+          value={loading ? '—' : counts.intro}
+          sub="All current intro memberships"
+          color="blue"
+          href={MB_REPORTS.intro}
         />
         <StatCard
-          label="Visits This Week"
-          value={loading ? '—' : weeklyVisits.toLocaleString()}
-          sub="Last 7 days"
+          label="New Intro Offers"
+          value={loading ? '—' : counts.introLast7Days}
+          sub="Signed up in the last 7 days"
+          color="yellow"
+          href={MB_REPORTS.introLast7Days}
+        />
+        <StatCard
+          label="Class Packs"
+          value={loading ? '—' : counts.classPacks}
+          sub="Casual session packs"
+          color="purple"
+          href={MB_REPORTS.classPacks}
+        />
+        <StatCard
+          label="Declined Members"
+          value={loading ? '—' : counts.declined}
+          sub="Failed payment status"
+          color="red"
+          href={MB_REPORTS.declined}
         />
       </div>
 
-      {/* Today's classes */}
-      <div className="bg-gym-surface border border-gym-border rounded-xl overflow-hidden mb-6">
-        <div className="px-6 py-4 border-b border-gym-border">
-          <h2 className="text-gym-text font-semibold">Today&apos;s Classes</h2>
-        </div>
-        {loading ? (
-          <div className="p-12 text-center text-gym-muted text-sm">Loading…</div>
-        ) : todaysClasses.length === 0 ? (
-          <div className="p-12 text-center text-gym-muted text-sm">No classes scheduled today</div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gym-border">
-                <th className="px-6 py-3 text-left text-gym-muted font-medium">Class</th>
-                <th className="px-6 py-3 text-left text-gym-muted font-medium">Time</th>
-                <th className="px-6 py-3 text-left text-gym-muted font-medium">Trainer</th>
-                <th className="px-6 py-3 text-left text-gym-muted font-medium">Booked</th>
-              </tr>
-            </thead>
-            <tbody>
-              {todaysClasses.map((c) => {
-                const time = new Date(c.StartDateTime).toLocaleTimeString('en-AU', {
-                  hour: '2-digit', minute: '2-digit',
-                });
-                const pct = Math.round((c.TotalBooked / c.MaxCapacity) * 100);
-                return (
-                  <tr key={c.Id} className="border-b border-gym-border last:border-0 hover:bg-gym-border/20 transition-colors">
-                    <td className="px-6 py-4 text-gym-text font-medium">{c.ClassDescription.Name}</td>
-                    <td className="px-6 py-4 text-gym-muted">{time}</td>
-                    <td className="px-6 py-4 text-gym-muted">{c.Staff.Name}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 bg-gym-border rounded-full h-1.5 w-20">
-                          <div
-                            className="bg-gym-accent h-1.5 rounded-full"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className="text-gym-muted text-xs">{c.TotalBooked}/{c.MaxCapacity}</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {!loading && !data?.mock && (
-        <p className="text-gym-muted text-xs text-center">
-          Live data from MindBody Site ID: {process.env.NEXT_PUBLIC_MINDBODY_SITE_ID ?? '-99'}
+      {!loading && data?.updatedAt && (
+        <p className="text-gym-muted text-xs text-center mt-6">
+          Last updated: {new Date(data.updatedAt).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })}
+          {data.refreshing && ' · Refreshing…'}
         </p>
       )}
     </div>

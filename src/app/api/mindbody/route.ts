@@ -89,9 +89,6 @@ async function fetchCounts(): Promise<Counts> {
   const token = await getStaffToken();
   const { weekStartMs, monthStartMs } = getSydneyStarts();
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const thirtyDaysAgoStr = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
   const longAgoStr = '2000-01-01';
 
   // --- Step 1: Paginate all clients, collect membered + count declined ---
@@ -182,28 +179,49 @@ async function fetchCounts(): Promise<Counts> {
     }
   }
 
-  // --- Step 3: For each active member, fetch visit counts (recent + lifetime) ---
+  // --- Step 3: For each active member, paginate full visit history ---
+  // Filter: SignedIn === true AND class Name does NOT contain "creche" (case-insensitive)
+  // From filtered list: compute 30-day and lifetime counts
   const attendance = { zero: 0, low: 0, mid: 0, high: 0 };
   const milestones = { at50: 0, at100: 0, at200: 0, at500: 0, at1000: 0 };
+  const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  type Visit = { SignedIn?: boolean; Name?: string | null; StartDateTime?: string };
+
+  async function fetchAllVisits(clientId: string): Promise<Visit[]> {
+    const visits: Visit[] = [];
+    let vOffset = 0;
+    const PAGE = 200;
+    while (true) {
+      const data = await mbFetch(
+        `/client/clientvisits?ClientId=${clientId}&StartDate=${longAgoStr}&limit=${PAGE}&offset=${vOffset}`,
+        token,
+      );
+      const page: Visit[] = data.Visits || [];
+      visits.push(...page);
+      const total = data.PaginationResponse?.TotalResults ?? 0;
+      vOffset += PAGE;
+      if (vOffset >= total || page.length === 0) break;
+    }
+    return visits;
+  }
 
   for (let i = 0; i < activeMemberIds.length; i += BATCH_SIZE) {
     const batch = activeMemberIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
       batch.map(async (id) => {
-        const [recent, all] = await Promise.all([
-          mbFetch(
-            `/client/clientvisits?ClientId=${id}&StartDate=${thirtyDaysAgoStr}&limit=1`,
-            token,
-          ),
-          mbFetch(
-            `/client/clientvisits?ClientId=${id}&StartDate=${longAgoStr}&limit=1`,
-            token,
-          ),
-        ]);
-        return {
-          recentCount: (recent.PaginationResponse?.TotalResults ?? 0) as number,
-          totalCount: (all.PaginationResponse?.TotalResults ?? 0) as number,
-        };
+        const visits = await fetchAllVisits(id);
+        const filtered = visits.filter((v) => {
+          if (v.SignedIn !== true) return false;
+          const name = (v.Name || '').toLowerCase();
+          if (name.includes('creche')) return false;
+          return true;
+        });
+        const recentCount = filtered.filter((v) => {
+          const ts = parseDateMs(v.StartDateTime);
+          return ts !== null && ts >= thirtyDaysAgoMs;
+        }).length;
+        return { recentCount, totalCount: filtered.length };
       }),
     );
 
@@ -211,13 +229,13 @@ async function fetchCounts(): Promise<Counts> {
       if (result.status !== 'fulfilled') continue;
       const { recentCount, totalCount } = result.value;
 
-      // Attendance bucket (last 30 days)
+      // Attendance bucket (last 30 days, filtered)
       if (recentCount === 0) attendance.zero++;
       else if (recentCount <= 10) attendance.low++;
       else if (recentCount <= 20) attendance.mid++;
       else attendance.high++;
 
-      // Class milestone buckets (lifetime, inclusive)
+      // Class milestone buckets (lifetime, filtered, inclusive)
       if (totalCount >= 50) milestones.at50++;
       if (totalCount >= 100) milestones.at100++;
       if (totalCount >= 200) milestones.at200++;

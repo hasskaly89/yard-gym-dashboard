@@ -197,7 +197,7 @@ export default function MindBodyPage() {
       {/* Section 2: Attendance (active members, last 30 days) */}
       <SectionHeader
         title="Attendance (last 30 days)"
-        subtitle="Active members grouped by visits in the past 30 days"
+        subtitle="Active members by signed-in classes (excludes creche)"
       />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -255,41 +255,41 @@ export default function MindBodyPage() {
       {/* Section 4: Class Milestones */}
       <SectionHeader
         title="Class Milestones"
-        subtitle="Active members by lifetime class attendance"
+        subtitle="Lifetime signed-in classes (excludes creche) for active members"
       />
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           label="50+ Classes"
           value={v(counts.milestones.at50)}
-          sub="Lifetime visits"
+          sub="Signed-in classes, excludes creche"
           color="teal"
           href={MB_REPORTS.reports}
         />
         <StatCard
           label="100+ Classes"
           value={v(counts.milestones.at100)}
-          sub="Lifetime visits"
+          sub="Signed-in classes, excludes creche"
           color="blue"
           href={MB_REPORTS.reports}
         />
         <StatCard
           label="200+ Classes"
           value={v(counts.milestones.at200)}
-          sub="Lifetime visits"
+          sub="Signed-in classes, excludes creche"
           color="purple"
           href={MB_REPORTS.reports}
         />
         <StatCard
           label="500+ Classes"
           value={v(counts.milestones.at500)}
-          sub="Lifetime visits"
+          sub="Signed-in classes, excludes creche"
           color="pink"
           href={MB_REPORTS.reports}
         />
         <StatCard
           label="1000+ Classes"
           value={v(counts.milestones.at1000)}
-          sub="Lifetime visits"
+          sub="Signed-in classes, excludes creche"
           color="orange"
           href={MB_REPORTS.reports}
         />

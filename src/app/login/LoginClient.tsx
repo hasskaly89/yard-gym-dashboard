@@ -5,11 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginClient() {
-  const [role, setRole] = useState<'member' | 'admin'>('admin')
-  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
   const [mounted, setMounted] = useState(false)
   const searchParams = useSearchParams()
@@ -17,59 +16,28 @@ export default function LoginClient() {
   useEffect(() => {
     setMounted(true)
     const errParam = searchParams.get('error')
-    if (errParam === 'not_found') {
-      setError("We couldn't find your membership. Enter your name and email below to sign up.")
-    } else if (errParam === 'auth') {
-      setError('Something went wrong. Please request a new link.')
-    } else if (errParam === 'no-role') {
-      setError('Account not set up correctly. Please contact The Yard.')
+    if (errParam === 'auth') {
+      setError('Something went wrong. Please try again.')
     } else if (errParam === 'not_allowed') {
-      setError('That email is not authorised for the dashboard. Contact The Yard if you need access.')
-    }
-
-    const hash = window.location.hash
-    if (hash.includes('error_code=otp_expired') || hash.includes('otp_expired')) {
-      setError('Your login link expired — just enter your details again to get a fresh one.')
-      window.history.replaceState(null, '', window.location.pathname + window.location.search)
-    } else if (hash.includes('error=access_denied')) {
-      setError('That link is no longer valid. Enter your email below to get a new one.')
-      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      setError('That email is not authorised for the dashboard.')
     }
   }, [searchParams])
 
   const supabase = createClient()
 
   async function handleSubmit() {
-    if (!email) return
+    if (!email || !password) return
     setLoading(true)
     setError('')
 
-    if (role === 'member') {
-      const parts = name.trim().split(' ')
-      const firstName = parts[0] ?? ''
-      const lastName = parts.slice(1).join(' ')
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${location.origin}/auth/callback`,
-          data: { role: 'member', first_name: firstName, last_name: lastName },
-        },
-      })
-      if (error) { setError(error.message); setLoading(false); return }
-      setSuccess(true)
-    } else {
-      // Admin: magic link (no password). Email must be in ADMIN_EMAILS allowlist.
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: `${location.origin}/auth/callback`,
-          data: { role: 'admin' },
-        },
-      })
-      if (error) { setError(error.message); setLoading(false); return }
-      setSuccess(true)
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) {
+      setError(error.message)
+      setLoading(false)
+      return
     }
-    setLoading(false)
+    const next = searchParams.get('next') || '/'
+    window.location.href = next
   }
 
   return (
@@ -87,7 +55,6 @@ export default function LoginClient() {
           background: #0A0918;
         }
 
-        /* Animated background gradient orbs */
         .login-page::before {
           content: '';
           position: absolute;
@@ -126,14 +93,6 @@ export default function LoginClient() {
         @keyframes cardEnter {
           from { opacity: 0; transform: translateY(32px) scale(0.96); }
           to   { opacity: 1; transform: translateY(0) scale(1); }
-        }
-
-        .login-success {
-          animation: successPop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-        }
-        @keyframes successPop {
-          from { opacity: 0; transform: scale(0.9); }
-          to   { opacity: 1; transform: scale(1); }
         }
 
         .login-input {
@@ -185,7 +144,6 @@ export default function LoginClient() {
         .login-btn:active { transform: translateY(0); }
         .login-btn:disabled { cursor: not-allowed; }
 
-        /* Shimmer effect on button */
         .login-btn::after {
           content: '';
           position: absolute;
@@ -200,22 +158,6 @@ export default function LoginClient() {
           left: 100%;
         }
 
-        .role-tab {
-          flex: 1;
-          padding: 11px 12px;
-          border: none;
-          border-radius: 12px;
-          font-family: 'DM Sans', sans-serif;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.25s;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-        }
-
         .field-label {
           display: block;
           font-size: 11px;
@@ -224,17 +166,6 @@ export default function LoginClient() {
           text-transform: uppercase;
           color: rgba(255,255,255,0.4);
           margin-bottom: 8px;
-        }
-
-        .stat-pill {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 14px;
-          border-radius: 12px;
-          font-size: 12px;
-          background: rgba(255,255,255,0.04);
-          border: 1px solid rgba(255,255,255,0.06);
         }
       `}</style>
 
@@ -256,11 +187,11 @@ export default function LoginClient() {
                   <path d="M20.57 14.86L22 13.43 20.57 12 17 15.57 8.43 7 12 3.43 10.57 2 9.14 3.43 7.71 2 5.57 4.14 4.14 2.71 2.71 4.14l1.43 1.43L2 7.71l1.43 1.43L2 10.57 3.43 12 7 8.43 15.57 17 12 20.57 13.43 22l1.43-1.43L16.29 22l2.14-2.14 1.43 1.43 1.43-1.43-1.43-1.43L22 16.29z"/>
                 </svg>
               </div>
-              <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 34, letterSpacing: 5, color: '#fff', lineHeight: 1, margin: 0 }}>
-                THE <span style={{ color: '#FF5C3E' }}>YARD</span>
+              <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, letterSpacing: 3, color: '#fff', lineHeight: 1.1, margin: 0, textAlign: 'center' }}>
+                THE <span style={{ color: '#FF5C3E' }}>YARD GYM</span>
               </h1>
-              <p style={{ fontSize: 11, letterSpacing: 4, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>
-                Strength Training Platform
+              <p style={{ fontSize: 12, letterSpacing: 3, textTransform: 'uppercase', color: 'rgba(255,255,255,0.4)', marginTop: 8, textAlign: 'center' }}>
+                Edensor Park Dashboard
               </p>
             </div>
 
@@ -273,149 +204,85 @@ export default function LoginClient() {
               padding: '32px 28px 28px',
               border: '1px solid rgba(255,255,255,0.08)',
             }}>
-              {!success ? (
-                <>
-                  {/* Role Toggle */}
-                  <div style={{ display: 'flex', gap: 4, marginBottom: 28, padding: 4, background: 'rgba(255,255,255,0.04)', borderRadius: 14 }}>
-                    {(['member', 'admin'] as const).map((r) => (
-                      <button
-                        key={r}
-                        onClick={() => { setRole(r); setError(''); setName('') }}
-                        className="role-tab"
-                        style={{
-                          background: role === r
-                            ? 'linear-gradient(135deg, rgba(255,92,62,0.2), rgba(255,92,62,0.1))'
-                            : 'transparent',
-                          color: role === r ? '#fff' : 'rgba(255,255,255,0.4)',
-                          border: role === r ? '1px solid rgba(255,92,62,0.3)' : '1px solid transparent',
-                        }}
-                      >
-                        <span style={{ fontSize: 16 }}>{r === 'member' ? '🏋️' : '⚡'}</span>
-                        {r === 'member' ? 'Member' : 'Admin'}
-                      </button>
-                    ))}
-                  </div>
+              {/* Email */}
+              <div style={{ marginBottom: 16 }}>
+                <label className="field-label">Email Address</label>
+                <input
+                  className="login-input"
+                  type="email"
+                  placeholder="you@theyardgym.com.au"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                />
+              </div>
 
-                  {/* Full Name — members only */}
-                  {role === 'member' && (
-                    <div style={{ marginBottom: 16 }}>
-                      <label className="field-label">Full Name</label>
-                      <input
-                        className="login-input"
-                        type="text"
-                        placeholder="Jane Smith"
-                        value={name}
-                        onChange={e => setName(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                      />
-                    </div>
-                  )}
-
-                  {/* Email */}
-                  <div style={{ marginBottom: 16 }}>
-                    <label className="field-label">Email Address</label>
-                    <input
-                      className="login-input"
-                      type="email"
-                      placeholder={role === 'member' ? 'your@email.com' : 'admin@theyardgym.com.au'}
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                    />
-                  </div>
-
-                  {/* Hint */}
-                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', marginBottom: 24, lineHeight: 1.6, textAlign: 'center' }}>
-                    We&apos;ll send a <strong style={{ color: 'rgba(255,255,255,0.5)' }}>magic link</strong> — no password needed.
-                  </p>
-
-                  {error && (
-                    <div style={{
-                      fontSize: 13, color: '#FF6B6B', marginBottom: 16, textAlign: 'center',
-                      padding: '10px 14px', borderRadius: 12,
-                      background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.15)',
-                    }}>
-                      {error}
-                    </div>
-                  )}
-
-                  {/* Submit */}
+              {/* Password */}
+              <div style={{ marginBottom: 24 }}>
+                <label className="field-label">Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    className="login-input"
+                    type={showPw ? 'text' : 'password'}
+                    placeholder="Enter password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                    style={{ paddingRight: 48 }}
+                  />
                   <button
-                    className="login-btn"
-                    onClick={handleSubmit}
-                    disabled={loading}
+                    onClick={() => setShowPw(!showPw)}
+                    type="button"
                     style={{
-                      background: loading
-                        ? 'rgba(255,92,62,0.4)'
-                        : 'linear-gradient(135deg, #FF5C3E, #FF7A5C)',
-                      boxShadow: loading ? 'none' : '0 4px 20px rgba(255,92,62,0.3)',
+                      position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'rgba(255,255,255,0.3)', fontSize: 16,
                     }}
                   >
-                    {loading ? (
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{
-                          width: 18, height: 18, border: '2px solid rgba(255,255,255,0.3)',
-                          borderTopColor: '#fff', borderRadius: '50%',
-                          animation: 'spin 0.6s linear infinite', display: 'inline-block',
-                        }} />
-                        Sending link...
-                      </span>
-                    ) : (
-                      'Send Login Link'
-                    )}
-                  </button>
-
-                  {/* Where you'll go */}
-                  <div className="stat-pill" style={{ marginTop: 20, justifyContent: 'center' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.3)' }}>
-                      {role === 'member' ? 'Opens' : 'Opens'}
-                    </span>
-                    <span style={{ color: '#FF5C3E', fontWeight: 700, fontSize: 13 }}>
-                      {role === 'member' ? 'RIG Calculator' : 'Full Dashboard'}
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <div className="login-success" style={{ textAlign: 'center', padding: '8px 0' }}>
-                  {/* Success checkmark animation */}
-                  <div style={{
-                    width: 72, height: 72, borderRadius: '50%',
-                    background: 'linear-gradient(135deg, rgba(0,200,150,0.15), rgba(0,200,150,0.05))',
-                    border: '2px solid rgba(0,200,150,0.3)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 20px', fontSize: 32,
-                  }}>
-                    ✉️
-                  </div>
-                  <h2 style={{
-                    fontFamily: "'Bebas Neue', cursive", fontSize: 28, letterSpacing: 3,
-                    color: '#fff', marginBottom: 10, lineHeight: 1.2,
-                  }}>
-                    {name ? `LET'S GO, ${name.split(' ')[0].toUpperCase()}!` : 'CHECK YOUR EMAIL'}
-                  </h2>
-                  <p style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
-                    We&apos;ve sent a login link to<br />
-                    <strong style={{ color: 'rgba(255,255,255,0.7)' }}>{email}</strong>
-                  </p>
-                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)', marginTop: 12 }}>
-                    Tap the link to open your RIG Calculator.
-                  </p>
-                  <button
-                    onClick={() => { setSuccess(false); setEmail('') }}
-                    style={{
-                      background: 'rgba(255,92,62,0.1)', border: '1px solid rgba(255,92,62,0.2)',
-                      color: '#FF5C3E', marginTop: 24, cursor: 'pointer',
-                      fontSize: 13, fontWeight: 600, padding: '10px 20px', borderRadius: 12,
-                    }}
-                  >
-                    Back to login
+                    {showPw ? '🙈' : '👁️'}
                   </button>
                 </div>
+              </div>
+
+              {error && (
+                <div style={{
+                  fontSize: 13, color: '#FF6B6B', marginBottom: 16, textAlign: 'center',
+                  padding: '10px 14px', borderRadius: 12,
+                  background: 'rgba(255,107,107,0.08)', border: '1px solid rgba(255,107,107,0.15)',
+                }}>
+                  {error}
+                </div>
               )}
+
+              {/* Submit */}
+              <button
+                className="login-btn"
+                onClick={handleSubmit}
+                disabled={loading}
+                style={{
+                  background: loading
+                    ? 'rgba(255,92,62,0.4)'
+                    : 'linear-gradient(135deg, #FF5C3E, #FF7A5C)',
+                  boxShadow: loading ? 'none' : '0 4px 20px rgba(255,92,62,0.3)',
+                }}
+              >
+                {loading ? (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      width: 18, height: 18, border: '2px solid rgba(255,255,255,0.3)',
+                      borderTopColor: '#fff', borderRadius: '50%',
+                      animation: 'spin 0.6s linear infinite', display: 'inline-block',
+                    }} />
+                    Signing in...
+                  </span>
+                ) : (
+                  'Sign In'
+                )}
+              </button>
             </div>
 
             <p style={{ marginTop: 28, fontSize: 11, color: 'rgba(255,255,255,0.15)', textAlign: 'center', letterSpacing: 2 }}>
-              THE YARD GYM &middot; SYDNEY
+              THE YARD GYM &middot; EDENSOR PARK
             </p>
           </div>
         </div>

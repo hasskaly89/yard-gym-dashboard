@@ -276,9 +276,9 @@ export default function MindBodyPage() {
           href={MB_REPORTS.reports}
         />
         <StatCard
-          label="Terminations"
+          label="Terminated Members"
           value={v(ranged.terminations)}
-          sub="Active memberships ended in range"
+          sub="Members whose active-tier membership ended"
           color="red"
           href={MB_REPORTS.reports}
         />

@@ -101,6 +101,7 @@ async function mbFetch(path: string, token: string) {
 async function fetchCounts(): Promise<Counts> {
   const token = await getStaffToken();
   const { weekStartMs, monthStartMs, ytdStartMs } = getSydneyStarts();
+  const nowMs = Date.now();
   const longAgoStr = '2000-01-01';
 
   const rangeStarts = {
@@ -111,8 +112,43 @@ async function fetchCounts(): Promise<Counts> {
   type RangeKey = keyof typeof rangeStarts;
   const RANGE_KEYS: RangeKey[] = ['week', 'month', 'ytd'];
 
+  // --- Step 0: Build contract-template → membership-type map ---
+  // Used to filter terminations to active-tier contracts only.
+  const contractToMembership = new Map<number, number>();
+  try {
+    const locRes = await mbFetch('/site/locations', token);
+    const locations = (locRes.Locations || []) as Array<{ Id: number }>;
+    const locationIds = locations.length > 0 ? locations.map((l) => l.Id) : [1];
+
+    for (const locationId of locationIds) {
+      let cOffset = 0;
+      while (true) {
+        const data = await mbFetch(
+          `/sale/contracts?LocationId=${locationId}&limit=200&offset=${cOffset}`,
+          token,
+        );
+        const templates = (data.Contracts || []) as Array<{
+          Id: number;
+          AssignsMembershipId?: number;
+        }>;
+        for (const t of templates) {
+          if (typeof t.AssignsMembershipId === 'number') {
+            contractToMembership.set(t.Id, t.AssignsMembershipId);
+          }
+        }
+        const total = data.PaginationResponse?.TotalResults ?? 0;
+        cOffset += 200;
+        if (cOffset >= total || templates.length === 0) break;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load contract templates:', err);
+    // Continue with empty map — terminations will simply count zero
+  }
+
   // --- Step 1: Paginate all clients, collect membered + count declined ---
   const memberedClientIds: string[] = [];
+  const allClientIds: string[] = [];
   let declined = 0;
   let offset = 0;
 
@@ -120,6 +156,7 @@ async function fetchCounts(): Promise<Counts> {
     const data = await mbFetch(`/client/clients?limit=200&offset=${offset}`, token);
     const clients = data.Clients || [];
     for (const c of clients) {
+      allClientIds.push(c.Id);
       if (c.MembershipIcon > 0) memberedClientIds.push(c.Id);
       if (c.Status === 'Declined') declined++;
     }
@@ -150,6 +187,7 @@ async function fetchCounts(): Promise<Counts> {
 
   type ClientContract = {
     Id?: number;
+    ContractID?: number;
     ContractName?: string;
     StartDate?: string;
     EndDate?: string;
@@ -216,15 +254,60 @@ async function fetchCounts(): Promise<Counts> {
         classPacks++;
       }
 
-      // Terminations: contracts with TerminationDate in the range
-      // (TerminationDate is the explicit cancellation/termination signal from MindBody)
-      const terminated = contracts.filter((c) => c.TerminationDate);
+      // Terminations: contracts with TerminationDate in the range that
+      // assign an active-tier membership and have already terminated (no future-dated)
+      const terminated = contracts.filter((c) => {
+        if (!c.TerminationDate) return false;
+        const templateId = c.ContractID;
+        if (typeof templateId !== 'number') return false;
+        const membershipId = contractToMembership.get(templateId);
+        if (membershipId === undefined) return false;
+        return ACTIVE_MEMBERSHIP_IDS.includes(membershipId);
+      });
       if (terminated.length > 0) {
         for (const key of RANGE_KEYS) {
           const start = rangeStarts[key];
           const inRange = terminated.some((c) => {
             const ts = parseDateMs(c.TerminationDate);
-            return ts !== null && ts >= start;
+            return ts !== null && ts >= start && ts <= nowMs;
+          });
+          if (inRange) ranged[key].terminations++;
+        }
+      }
+    }
+  }
+
+  // --- Step 2b: For non-membered clients, fetch contracts to catch fully-departed terminations ---
+  const memberedSet = new Set(memberedClientIds);
+  const nonMemberedIds = allClientIds.filter((id) => !memberedSet.has(id));
+
+  for (let i = 0; i < nonMemberedIds.length; i += BATCH_SIZE) {
+    const batch = nonMemberedIds.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map((id) =>
+        mbFetch(`/client/clientcontracts?ClientId=${id}`, token)
+          .then((r) => ({ contracts: (r.Contracts || []) as ClientContract[] }))
+          .catch(() => ({ contracts: [] as ClientContract[] })),
+      ),
+    );
+
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      const { contracts } = result.value;
+      const terminated = contracts.filter((c) => {
+        if (!c.TerminationDate) return false;
+        const templateId = c.ContractID;
+        if (typeof templateId !== 'number') return false;
+        const membershipId = contractToMembership.get(templateId);
+        if (membershipId === undefined) return false;
+        return ACTIVE_MEMBERSHIP_IDS.includes(membershipId);
+      });
+      if (terminated.length > 0) {
+        for (const key of RANGE_KEYS) {
+          const start = rangeStarts[key];
+          const inRange = terminated.some((c) => {
+            const ts = parseDateMs(c.TerminationDate);
+            return ts !== null && ts >= start && ts <= nowMs;
           });
           if (inRange) ranged[key].terminations++;
         }

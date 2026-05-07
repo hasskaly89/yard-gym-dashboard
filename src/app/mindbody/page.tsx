@@ -2,15 +2,26 @@
 
 import { useEffect, useState } from 'react';
 
+type RangeKey = 'week' | 'month' | 'ytd';
+
+interface RangedMetrics {
+  newIntros: number;
+  newActive: number;
+  terminations: number;
+}
+
 interface MBCounts {
   active: number;
   intro: number;
-  introLast7Days: number;
   classPacks: number;
   declined: number;
   attendance: { zero: number; low: number; mid: number; high: number };
-  newActive: { thisWeek: number; thisMonth: number };
   milestones: { at50: number; at100: number; at200: number; at500: number; at1000: number };
+  ranged: {
+    week: RangedMetrics;
+    month: RangedMetrics;
+    ytd: RangedMetrics;
+  };
 }
 
 interface MBData {
@@ -26,6 +37,18 @@ interface MBData {
 const MB_REPORTS = {
   clients: 'https://clients.mindbodyonline.com/ASP/adm/adm_clt_srch.asp?studioid=5741283',
   reports: 'https://clients.mindbodyonline.com/ASP/main_reports.asp?studioid=5741283',
+};
+
+const RANGE_LABELS: Record<RangeKey, string> = {
+  week: 'This Week',
+  month: 'This Month',
+  ytd: 'Year to Date',
+};
+
+const RANGE_SUB: Record<RangeKey, string> = {
+  week: 'Mon–Sun (Sydney)',
+  month: 'Calendar month so far',
+  ytd: 'Jan 1 – today',
 };
 
 type CardColor = 'green' | 'blue' | 'purple' | 'red' | 'yellow' | 'teal' | 'orange' | 'pink';
@@ -94,21 +117,57 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
   );
 }
 
+function RangeFilter({
+  value,
+  onChange,
+}: {
+  value: RangeKey;
+  onChange: (r: RangeKey) => void;
+}) {
+  const options: RangeKey[] = ['week', 'month', 'ytd'];
+  return (
+    <div className="inline-flex bg-gym-surface border border-gym-border rounded-lg p-1">
+      {options.map((opt) => {
+        const active = opt === value;
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            className={`px-3 py-1.5 text-sm rounded-md transition ${
+              active
+                ? 'bg-gym-text/10 text-gym-text'
+                : 'text-gym-muted hover:text-gym-text'
+            }`}
+          >
+            {RANGE_LABELS[opt]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const EMPTY_RANGED: RangedMetrics = { newIntros: 0, newActive: 0, terminations: 0 };
 const EMPTY_COUNTS: MBCounts = {
   active: 0,
   intro: 0,
-  introLast7Days: 0,
   classPacks: 0,
   declined: 0,
   attendance: { zero: 0, low: 0, mid: 0, high: 0 },
-  newActive: { thisWeek: 0, thisMonth: 0 },
   milestones: { at50: 0, at100: 0, at200: 0, at500: 0, at1000: 0 },
+  ranged: {
+    week: { ...EMPTY_RANGED },
+    month: { ...EMPTY_RANGED },
+    ytd: { ...EMPTY_RANGED },
+  },
 };
 
 export default function MindBodyPage() {
   const [data, setData] = useState<MBData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [range, setRange] = useState<RangeKey>('month');
 
   useEffect(() => {
     fetch('/api/mindbody')
@@ -122,7 +181,9 @@ export default function MindBodyPage() {
   }, []);
 
   const counts = data?.counts ?? EMPTY_COUNTS;
+  const ranged = counts.ranged[range];
   const v = (n: number) => (loading ? '—' : n);
+  const rangeSub = RANGE_SUB[range];
 
   return (
     <div className="p-8">
@@ -154,9 +215,16 @@ export default function MindBodyPage() {
         </div>
       )}
 
-      {/* Section 1: Memberships */}
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-gym-muted text-sm">
+          Filter applies to <span className="text-gym-text">Activity</span> cards below
+        </p>
+        <RangeFilter value={range} onChange={setRange} />
+      </div>
+
+      {/* Section 1: Memberships (snapshot — current state) */}
       <SectionHeader title="Memberships" subtitle="Current membership status across the studio" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Active Members"
           value={v(counts.active)}
@@ -170,13 +238,6 @@ export default function MindBodyPage() {
           sub="All current intro memberships"
           color="blue"
           href={MB_REPORTS.clients}
-        />
-        <StatCard
-          label="New Intro Offers"
-          value={v(counts.introLast7Days)}
-          sub="Signed up in the last 7 days"
-          color="yellow"
-          href={MB_REPORTS.reports}
         />
         <StatCard
           label="Class Packs"
@@ -194,7 +255,36 @@ export default function MindBodyPage() {
         />
       </div>
 
-      {/* Section 2: Attendance (active members, last 30 days) */}
+      {/* Section 2: Activity (filtered by range) */}
+      <SectionHeader
+        title={`Activity · ${RANGE_LABELS[range]}`}
+        subtitle="New sign-ups, new intros, and ended memberships in the selected range"
+      />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <StatCard
+          label="New Active Members"
+          value={v(ranged.newActive)}
+          sub={rangeSub}
+          color="teal"
+          href={MB_REPORTS.reports}
+        />
+        <StatCard
+          label="New Intro Offers"
+          value={v(ranged.newIntros)}
+          sub={rangeSub}
+          color="yellow"
+          href={MB_REPORTS.reports}
+        />
+        <StatCard
+          label="Terminations"
+          value={v(ranged.terminations)}
+          sub="Active memberships ended in range"
+          color="red"
+          href={MB_REPORTS.reports}
+        />
+      </div>
+
+      {/* Section 3: Attendance (active members, last 30 days) */}
       <SectionHeader
         title="Attendance (last 30 days)"
         subtitle="Active members by signed-in classes (excludes creche)"
@@ -226,28 +316,6 @@ export default function MindBodyPage() {
           value={v(counts.attendance.high)}
           sub="Highly active"
           color="green"
-          href={MB_REPORTS.reports}
-        />
-      </div>
-
-      {/* Section 3: New Active Members */}
-      <SectionHeader
-        title="New Active Members"
-        subtitle="New sign-ups on the 5 active membership types"
-      />
-      <div className="grid grid-cols-2 gap-4">
-        <StatCard
-          label="This Week"
-          value={v(counts.newActive.thisWeek)}
-          sub="Monday – Sunday (Sydney time)"
-          color="teal"
-          href={MB_REPORTS.reports}
-        />
-        <StatCard
-          label="This Month"
-          value={v(counts.newActive.thisMonth)}
-          sub="Calendar month so far"
-          color="orange"
           href={MB_REPORTS.reports}
         />
       </div>

@@ -16,15 +16,26 @@ const CLASS_PACK_MEMBERSHIP_IDS = [13];
 const SYDNEY_OFFSET_HOURS = 10;
 
 // --- Cache ---
+type RangedMetrics = {
+  newIntros: number;
+  newActive: number;
+  terminations: number;
+};
+
 type Counts = {
+  // Snapshots (current state)
   active: number;
   intro: number;
-  introLast7Days: number;
   classPacks: number;
   declined: number;
   attendance: { zero: number; low: number; mid: number; high: number };
-  newActive: { thisWeek: number; thisMonth: number };
   milestones: { at50: number; at100: number; at200: number; at500: number; at1000: number };
+  // Per-range metrics (computed for week, month, ytd in one pass)
+  ranged: {
+    week: RangedMetrics;
+    month: RangedMetrics;
+    ytd: RangedMetrics;
+  };
 };
 
 const CACHE_TTL = 5 * 60 * 1000;
@@ -39,8 +50,8 @@ function parseDateMs(d: string | null | undefined): number | null {
   return isNaN(ts) ? null : ts;
 }
 
-function getSydneyStarts(): { weekStartMs: number; monthStartMs: number } {
-  // Treat UTC + 10h as Sydney wall clock to derive "Monday" and "first of month"
+function getSydneyStarts(): { weekStartMs: number; monthStartMs: number; ytdStartMs: number } {
+  // Treat UTC + 10h as Sydney wall clock to derive "Monday", "first of month", "Jan 1"
   const now = new Date();
   const sydney = new Date(now.getTime() + SYDNEY_OFFSET_HOURS * 3600 * 1000);
   const dow = sydney.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
@@ -54,7 +65,9 @@ function getSydneyStarts(): { weekStartMs: number; monthStartMs: number } {
   const monthStartMs =
     Date.UTC(sydney.getUTCFullYear(), sydney.getUTCMonth(), 1) -
     SYDNEY_OFFSET_HOURS * 3600 * 1000;
-  return { weekStartMs, monthStartMs };
+  const ytdStartMs =
+    Date.UTC(sydney.getUTCFullYear(), 0, 1) - SYDNEY_OFFSET_HOURS * 3600 * 1000;
+  return { weekStartMs, monthStartMs, ytdStartMs };
 }
 
 async function getStaffToken(): Promise<string> {
@@ -87,9 +100,16 @@ async function mbFetch(path: string, token: string) {
 
 async function fetchCounts(): Promise<Counts> {
   const token = await getStaffToken();
-  const { weekStartMs, monthStartMs } = getSydneyStarts();
-  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const { weekStartMs, monthStartMs, ytdStartMs } = getSydneyStarts();
   const longAgoStr = '2000-01-01';
+
+  const rangeStarts = {
+    week: weekStartMs,
+    month: monthStartMs,
+    ytd: ytdStartMs,
+  } as const;
+  type RangeKey = keyof typeof rangeStarts;
+  const RANGE_KEYS: RangeKey[] = ['week', 'month', 'ytd'];
 
   // --- Step 1: Paginate all clients, collect membered + count declined ---
   const memberedClientIds: string[] = [];
@@ -111,34 +131,52 @@ async function fetchCounts(): Promise<Counts> {
   // --- Step 2: For each membered client, fetch memberships ---
   let active = 0;
   let intro = 0;
-  let introLast7Days = 0;
   let classPacks = 0;
-  let newActiveThisWeek = 0;
-  let newActiveThisMonth = 0;
+  const ranged: Record<RangeKey, RangedMetrics> = {
+    week: { newIntros: 0, newActive: 0, terminations: 0 },
+    month: { newIntros: 0, newActive: 0, terminations: 0 },
+    ytd: { newIntros: 0, newActive: 0, terminations: 0 },
+  };
   const activeMemberIds: string[] = [];
   const BATCH_SIZE = 30;
 
   type ClientMembership = {
     MembershipId: number;
     Current: boolean;
-    ActivationDate?: string;
+    ActiveDate?: string;
     PaymentDate?: string;
+    ExpirationDate?: string;
+  };
+
+  type ClientContract = {
+    Id?: number;
+    ContractName?: string;
+    StartDate?: string;
+    EndDate?: string;
+    TerminationDate?: string | null;
   };
 
   for (let i = 0; i < memberedClientIds.length; i += BATCH_SIZE) {
     const batch = memberedClientIds.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
-      batch.map((id) =>
-        mbFetch(`/client/activeclientmemberships?ClientId=${id}`, token).then((r) => ({
+      batch.map(async (id) => {
+        const [memRes, conRes] = await Promise.all([
+          mbFetch(`/client/activeclientmemberships?ClientId=${id}`, token),
+          mbFetch(`/client/clientcontracts?ClientId=${id}`, token).catch(() => ({
+            Contracts: [],
+          })),
+        ]);
+        return {
           id,
-          memberships: (r.ClientMemberships || []) as ClientMembership[],
-        })),
-      ),
+          memberships: (memRes.ClientMemberships || []) as ClientMembership[],
+          contracts: (conRes.Contracts || []) as ClientContract[],
+        };
+      }),
     );
 
     for (const result of results) {
       if (result.status !== 'fulfilled') continue;
-      const { id, memberships } = result.value;
+      const { id, memberships, contracts } = result.value;
       const current = memberships.filter((m) => m.Current);
 
       const activeMatches = current.filter((m) =>
@@ -148,17 +186,15 @@ async function fetchCounts(): Promise<Counts> {
         active++;
         activeMemberIds.push(id);
 
-        // New active membership this week / month?
-        const hasThisWeek = activeMatches.some((m) => {
-          const ts = parseDateMs(m.ActivationDate || m.PaymentDate);
-          return ts !== null && ts >= weekStartMs;
-        });
-        const hasThisMonth = activeMatches.some((m) => {
-          const ts = parseDateMs(m.ActivationDate || m.PaymentDate);
-          return ts !== null && ts >= monthStartMs;
-        });
-        if (hasThisWeek) newActiveThisWeek++;
-        if (hasThisMonth) newActiveThisMonth++;
+        // New active member: count once per client per range it activated within
+        for (const key of RANGE_KEYS) {
+          const start = rangeStarts[key];
+          const inRange = activeMatches.some((m) => {
+            const ts = parseDateMs(m.ActiveDate || m.PaymentDate);
+            return ts !== null && ts >= start;
+          });
+          if (inRange) ranged[key].newActive++;
+        }
       }
 
       const introMatches = current.filter((m) =>
@@ -166,15 +202,32 @@ async function fetchCounts(): Promise<Counts> {
       );
       if (introMatches.length > 0) {
         intro++;
-        const hasRecent = introMatches.some((m) => {
-          const ts = parseDateMs(m.ActivationDate || m.PaymentDate);
-          return ts !== null && ts >= sevenDaysAgo;
-        });
-        if (hasRecent) introLast7Days++;
+        for (const key of RANGE_KEYS) {
+          const start = rangeStarts[key];
+          const inRange = introMatches.some((m) => {
+            const ts = parseDateMs(m.ActiveDate || m.PaymentDate);
+            return ts !== null && ts >= start;
+          });
+          if (inRange) ranged[key].newIntros++;
+        }
       }
 
       if (current.some((m) => CLASS_PACK_MEMBERSHIP_IDS.includes(m.MembershipId))) {
         classPacks++;
+      }
+
+      // Terminations: contracts with TerminationDate in the range
+      // (TerminationDate is the explicit cancellation/termination signal from MindBody)
+      const terminated = contracts.filter((c) => c.TerminationDate);
+      if (terminated.length > 0) {
+        for (const key of RANGE_KEYS) {
+          const start = rangeStarts[key];
+          const inRange = terminated.some((c) => {
+            const ts = parseDateMs(c.TerminationDate);
+            return ts !== null && ts >= start;
+          });
+          if (inRange) ranged[key].terminations++;
+        }
       }
     }
   }
@@ -247,12 +300,11 @@ async function fetchCounts(): Promise<Counts> {
   return {
     active,
     intro,
-    introLast7Days,
     classPacks,
     declined,
     attendance,
-    newActive: { thisWeek: newActiveThisWeek, thisMonth: newActiveThisMonth },
     milestones,
+    ranged,
   };
 }
 
@@ -274,15 +326,19 @@ function triggerBackgroundRefresh() {
 
 // --- Empty counts (for mock / first-load placeholder) ---
 function emptyCounts(): Counts {
+  const emptyRanged: RangedMetrics = { newIntros: 0, newActive: 0, terminations: 0 };
   return {
     active: 0,
     intro: 0,
-    introLast7Days: 0,
     classPacks: 0,
     declined: 0,
     attendance: { zero: 0, low: 0, mid: 0, high: 0 },
-    newActive: { thisWeek: 0, thisMonth: 0 },
     milestones: { at50: 0, at100: 0, at200: 0, at500: 0, at1000: 0 },
+    ranged: {
+      week: { ...emptyRanged },
+      month: { ...emptyRanged },
+      ytd: { ...emptyRanged },
+    },
   };
 }
 

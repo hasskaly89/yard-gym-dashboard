@@ -28,13 +28,32 @@ export async function proxy(request: NextRequest) {
 
   const isPublic = pathname === '/login' || pathname.startsWith('/auth')
 
+  // Admin allowlist — set ADMIN_EMAILS on Vercel as comma-separated list
+  const allowedEmails = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+  const userEmail = user?.email?.toLowerCase() ?? ''
+  const isAllowed = userEmail !== '' && allowedEmails.includes(userEmail)
+
+  // Not logged in → bounce to /login
   if (!user && !isPublic) {
-    // Owner dashboard doesn't require auth yet
-    return supabaseResponse
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('next', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  // Logged in but email not in allowlist → block
+  if (user && !isPublic && !isAllowed) {
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('error', 'not_allowed')
+    // sign them out so they can try with a different account
+    await supabase.auth.signOut()
+    return NextResponse.redirect(loginUrl)
   }
 
   // Already logged in and hitting /login → send them home
-  if (user && pathname === '/login') {
+  if (user && isAllowed && pathname === '/login') {
     return NextResponse.redirect(new URL('/', request.url))
   }
 

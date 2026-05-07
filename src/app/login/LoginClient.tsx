@@ -5,11 +5,9 @@ import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 export default function LoginClient() {
-  const [role, setRole] = useState<'member' | 'admin'>('member')
+  const [role, setRole] = useState<'member' | 'admin'>('admin')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
@@ -25,6 +23,8 @@ export default function LoginClient() {
       setError('Something went wrong. Please request a new link.')
     } else if (errParam === 'no-role') {
       setError('Account not set up correctly. Please contact The Yard.')
+    } else if (errParam === 'not_allowed') {
+      setError('That email is not authorised for the dashboard. Contact The Yard if you need access.')
     }
 
     const hash = window.location.hash
@@ -58,9 +58,16 @@ export default function LoginClient() {
       if (error) { setError(error.message); setLoading(false); return }
       setSuccess(true)
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      // Admin: magic link (no password). Email must be in ADMIN_EMAILS allowlist.
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${location.origin}/auth/callback`,
+          data: { role: 'admin' },
+        },
+      })
       if (error) { setError(error.message); setLoading(false); return }
-      window.location.href = '/'
+      setSuccess(true)
     }
     setLoading(false)
   }
@@ -317,40 +324,9 @@ export default function LoginClient() {
                     />
                   </div>
 
-                  {/* Admin password */}
-                  {role === 'admin' && (
-                    <div style={{ marginBottom: 16 }}>
-                      <label className="field-label">Password</label>
-                      <div style={{ position: 'relative' }}>
-                        <input
-                          className="login-input"
-                          type={showPw ? 'text' : 'password'}
-                          placeholder="Enter password"
-                          value={password}
-                          onChange={e => setPassword(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                          style={{ paddingRight: 48 }}
-                        />
-                        <button
-                          onClick={() => setShowPw(!showPw)}
-                          style={{
-                            position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)',
-                            background: 'none', border: 'none', cursor: 'pointer',
-                            color: 'rgba(255,255,255,0.3)', fontSize: 16,
-                          }}
-                        >
-                          {showPw ? '🙈' : '👁️'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Hint */}
                   <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.3)', marginBottom: 24, lineHeight: 1.6, textAlign: 'center' }}>
-                    {role === 'member'
-                      ? <>We&apos;ll send a <strong style={{ color: 'rgba(255,255,255,0.5)' }}>magic link</strong> — no password needed.</>
-                      : <>Sign in with your <strong style={{ color: 'rgba(255,255,255,0.5)' }}>staff credentials</strong>.</>
-                    }
+                    We&apos;ll send a <strong style={{ color: 'rgba(255,255,255,0.5)' }}>magic link</strong> — no password needed.
                   </p>
 
                   {error && (
@@ -382,12 +358,10 @@ export default function LoginClient() {
                           borderTopColor: '#fff', borderRadius: '50%',
                           animation: 'spin 0.6s linear infinite', display: 'inline-block',
                         }} />
-                        Signing you in...
+                        Sending link...
                       </span>
-                    ) : role === 'member' ? (
-                      'Send Login Link'
                     ) : (
-                      'Sign In'
+                      'Send Login Link'
                     )}
                   </button>
 

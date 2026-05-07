@@ -33,10 +33,16 @@ interface MBData {
   error?: string;
 }
 
-// MindBody Business Portal (newer UI) — studio 5741283
+// MindBody Business Portal — direct links to specific reports
 const MB_REPORTS = {
-  clients: 'https://clients.mindbodyonline.com/ASP/adm/adm_clt_srch.asp?studioid=5741283',
-  reports: 'https://clients.mindbodyonline.com/ASP/main_reports.asp?studioid=5741283',
+  // Members Report — filter by Membership type and Member Status (Active/Intro/Declined/Terminated/etc.)
+  members: 'https://clients.mindbodyonline.com/app/business/VIPMembershipReport/MembersReport',
+  // Attendance Analysis — visit history by time of day
+  attendance: 'https://clients.mindbodyonline.com/app/business/Report/Clients/AttendanceAnalysis?category=Clients',
+  // Membership summary (legacy ASP) — counts by membership type
+  membershipSummary: 'https://clients.mindbodyonline.com/app/business/ASP/adm/adm_rpt_membership_stats.asp?category=Clients',
+  // Reports landing
+  reports: 'https://clients.mindbodyonline.com/app/business/reportslandingpage',
 };
 
 const RANGE_LABELS: Record<RangeKey, string> = {
@@ -230,28 +236,28 @@ export default function MindBodyPage() {
           value={v(counts.active)}
           sub="Foundation T1 & T2, TYG, VIP, Black Friday"
           color="green"
-          href={MB_REPORTS.clients}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="Intro Offers"
           value={v(counts.intro)}
           sub="All current intro memberships"
           color="blue"
-          href={MB_REPORTS.clients}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="Class Packs"
           value={v(counts.classPacks)}
           sub="Casual session packs"
           color="purple"
-          href={MB_REPORTS.clients}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="Declined Members"
           value={v(counts.declined)}
           sub="Failed payment status"
           color="red"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
       </div>
 
@@ -266,21 +272,21 @@ export default function MindBodyPage() {
           value={v(ranged.newActive)}
           sub={rangeSub}
           color="teal"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="New Intro Offers"
           value={v(ranged.newIntros)}
           sub={rangeSub}
           color="yellow"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="Terminated Members"
           value={v(ranged.terminations)}
           sub="Members whose active-tier membership ended"
           color="red"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
       </div>
 
@@ -295,28 +301,28 @@ export default function MindBodyPage() {
           value={v(counts.attendance.zero)}
           sub="No visits in 30 days"
           color="red"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.attendance}
         />
         <StatCard
           label="1–10 Visits"
           value={v(counts.attendance.low)}
           sub="Light attendance"
           color="yellow"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.attendance}
         />
         <StatCard
           label="11–20 Visits"
           value={v(counts.attendance.mid)}
           sub="Regular attendance"
           color="blue"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.attendance}
         />
         <StatCard
           label="20+ Visits"
           value={v(counts.attendance.high)}
           sub="Highly active"
           color="green"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.attendance}
         />
       </div>
 
@@ -331,35 +337,35 @@ export default function MindBodyPage() {
           value={v(counts.milestones.at50)}
           sub="Signed-in classes, excludes creche"
           color="teal"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="100+ Classes"
           value={v(counts.milestones.at100)}
           sub="Signed-in classes, excludes creche"
           color="blue"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="200+ Classes"
           value={v(counts.milestones.at200)}
           sub="Signed-in classes, excludes creche"
           color="purple"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="500+ Classes"
           value={v(counts.milestones.at500)}
           sub="Signed-in classes, excludes creche"
           color="pink"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
         <StatCard
           label="1000+ Classes"
           value={v(counts.milestones.at1000)}
           sub="Signed-in classes, excludes creche"
           color="orange"
-          href={MB_REPORTS.reports}
+          href={MB_REPORTS.members}
         />
       </div>
 

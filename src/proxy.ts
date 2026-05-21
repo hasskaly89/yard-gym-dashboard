@@ -28,13 +28,20 @@ export async function proxy(request: NextRequest) {
 
   const isPublic = pathname === '/login' || pathname.startsWith('/auth')
 
-  // Admin allowlist — set ADMIN_EMAILS on Vercel as comma-separated list
-  const allowedEmails = (process.env.ADMIN_EMAILS ?? '')
+  // Admin allowlist — set ADMIN_EMAILS on Vercel as a comma-separated list.
+  // Supports two patterns per entry:
+  //   - exact email          e.g. hasskaly89@gmail.com
+  //   - wildcard at a domain e.g. *@theyardgym.com.au (allows every email on that domain)
+  const allowedPatterns = (process.env.ADMIN_EMAILS ?? '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean)
   const userEmail = user?.email?.toLowerCase() ?? ''
-  const isAllowed = userEmail !== '' && allowedEmails.includes(userEmail)
+  const isAllowed =
+    userEmail !== '' &&
+    allowedPatterns.some((p) =>
+      p.startsWith('*@') ? userEmail.endsWith(p.slice(1)) : p === userEmail,
+    )
 
   // Not logged in → bounce to /login
   if (!user && !isPublic) {

@@ -66,7 +66,7 @@ export default function GoHighLevelPage() {
   const totalUnread = data?.totalUnread ?? data?.conversations.reduce((sum, c) => sum + c.unreadCount, 0) ?? 0;
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div>

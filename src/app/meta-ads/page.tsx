@@ -1,6 +1,6 @@
 export default function MetaAdsPage() {
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gym-text">Meta Ads</h1>
         <p className="text-gym-text-secondary text-sm mt-1">Facebook and Instagram advertising performance</p>

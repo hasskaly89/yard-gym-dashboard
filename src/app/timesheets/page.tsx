@@ -58,7 +58,7 @@ export default function TimesheetsPage() {
   };
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gym-text">Timesheets</h1>
         <p className="text-gym-text-secondary text-sm mt-1">Submit your weekly hours for payroll processing</p>

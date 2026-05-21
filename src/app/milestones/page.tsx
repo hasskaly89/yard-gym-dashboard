@@ -68,7 +68,7 @@ export default function MilestonesPage() {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <h1 className="text-2xl font-bold text-gym-text mb-2">Milestones</h1>
         <p className="text-gym-text-secondary text-sm">Loading...</p>
       </div>
@@ -77,7 +77,7 @@ export default function MilestonesPage() {
 
   if (!data) {
     return (
-      <div className="p-8">
+      <div className="p-4 md:p-8">
         <h1 className="text-2xl font-bold text-gym-text mb-2">Milestones</h1>
         <p className="text-gym-text-secondary text-sm">
           Failed to load milestone data
@@ -87,7 +87,7 @@ export default function MilestonesPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-4 md:p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gym-text">Milestones</h1>
         <p className="text-gym-text-secondary text-sm mt-1">

@@ -28,10 +28,8 @@ interface RetentionData {
   error?: string;
 }
 
-// MindBody Business client profile — opens the staff-side member page in a new tab.
-// If your studio uses a different URL pattern, swap this single string.
 const mindBodyProfileUrl = (clientId: string) =>
-  `https://clients.mindbodyonline.com/Admin/Clients/Clients/Edit?clientId=${encodeURIComponent(clientId)}`;
+  `https://clients.mindbodyonline.com/app/clients/${encodeURIComponent(clientId)}/client-info`;
 
 type ColumnDef = {
   key: RiskCategory;

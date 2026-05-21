@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-type RiskCategory = 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'NON_ATTENDER';
+type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
 interface RetentionMember {
   id: string;
@@ -10,13 +10,12 @@ interface RetentionMember {
   lastName: string;
   email: string;
   mobilePhone: string;
-  riskCategory: RiskCategory;
-  recentCount: number;
-  visits60d: number;
-  visits90d: number;
-  expectedVisits: number;
-  ratio: number;
-  activeDate: string;
+  trendCategory: TrendCategory;
+  last30d: number;
+  prior30d: number;
+  last7d: number;
+  prior7d: number;
+  trend: number;
 }
 
 interface RetentionData {
@@ -32,48 +31,56 @@ const mindBodyProfileUrl = (clientId: string) =>
   `https://clients.mindbodyonline.com/app/clients/${encodeURIComponent(clientId)}/client-info`;
 
 type ColumnDef = {
-  key: RiskCategory;
+  key: TrendCategory;
   label: string;
+  hint: string;
   text: string;
   bar: string;
   pill: string;
-  ring: string;
 };
 
 const COLUMN_DEFS: ColumnDef[] = [
   {
-    key: 'LOW_RISK',
-    label: 'Low Risk',
+    key: 'STABLE',
+    label: 'Stable',
+    hint: 'Holding pace vs. last month',
     text: 'text-emerald-700',
     bar: 'bg-emerald-500',
     pill: 'bg-emerald-50 text-emerald-700',
-    ring: 'ring-emerald-100',
   },
   {
-    key: 'MEDIUM_RISK',
-    label: 'Medium Risk',
+    key: 'SLOWING',
+    label: 'Slowing',
+    hint: 'Early warning · down 15–45%',
     text: 'text-amber-700',
     bar: 'bg-amber-500',
     pill: 'bg-amber-50 text-amber-700',
-    ring: 'ring-amber-100',
   },
   {
-    key: 'HIGH_RISK',
-    label: 'High Risk',
+    key: 'SLIDING',
+    label: 'Sliding',
+    hint: 'At risk · down 45–75%',
     text: 'text-rose-700',
     bar: 'bg-rose-500',
     pill: 'bg-rose-50 text-rose-700',
-    ring: 'ring-rose-100',
   },
   {
-    key: 'NON_ATTENDER',
-    label: 'Non Attender',
+    key: 'STOPPED',
+    label: 'Stopped',
+    hint: 'Down 75%+ or zero visits',
     text: 'text-gray-700',
     bar: 'bg-gray-400',
     pill: 'bg-gray-100 text-gray-700',
-    ring: 'ring-gray-100',
   },
 ];
+
+function trendLabel(m: RetentionMember): string {
+  if (m.last30d === 0) return 'No visits in 30d';
+  if (m.prior30d === 0) return 'New activity';
+  const pct = Math.round((m.trend - 1) * 100);
+  if (pct === 0) return 'Same as last month';
+  return pct > 0 ? `↑ ${pct}% vs last month` : `↓ ${Math.abs(pct)}% vs last month`;
+}
 
 function MemberCard({
   member,
@@ -86,7 +93,10 @@ function MemberCard({
   copied: boolean;
   onCopy: (m: RetentionMember) => void;
 }) {
-  const percent = Math.round(member.ratio * 100);
+  // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
+  // Cap at 100% so growth doesn't visually swamp the column.
+  const barPct = Math.min(Math.round(member.trend * 100), 100);
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition">
       <div className="flex items-center justify-between gap-2 mb-2">
@@ -94,7 +104,7 @@ function MemberCard({
           href={mindBodyProfileUrl(member.id)}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-gray-900 text-sm font-medium truncate hover:text-gym-accent transition flex-1"
+          className="text-gray-900 text-sm font-medium truncate hover:text-gym-accent hover:underline transition flex-1"
           title="Open MindBody profile"
         >
           {member.firstName} {member.lastName}
@@ -119,14 +129,14 @@ function MemberCard({
       </div>
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-xs text-gray-500">
-          {member.recentCount} / {member.expectedVisits} · 30d
+          {member.prior30d} → <span className="text-gray-900 font-medium">{member.last30d}</span> visits
         </p>
-        <p className={`text-xs font-semibold ${col.text}`}>{percent}%</p>
+        <p className={`text-xs font-semibold ${col.text}`}>{trendLabel(member)}</p>
       </div>
       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         <div
           className={`h-full ${col.bar} transition-all`}
-          style={{ width: `${Math.max(percent, 2)}%` }}
+          style={{ width: `${Math.max(barPct, 2)}%` }}
         />
       </div>
     </div>
@@ -175,15 +185,16 @@ export default function RetentionPage() {
   }, [members, search]);
 
   const grouped = useMemo(() => {
-    const groups: Record<RiskCategory, RetentionMember[]> = {
-      LOW_RISK: [],
-      MEDIUM_RISK: [],
-      HIGH_RISK: [],
-      NON_ATTENDER: [],
+    const groups: Record<TrendCategory, RetentionMember[]> = {
+      STABLE: [],
+      SLOWING: [],
+      SLIDING: [],
+      STOPPED: [],
     };
-    for (const m of filtered) groups[m.riskCategory].push(m);
-    for (const cat of Object.keys(groups) as RiskCategory[]) {
-      groups[cat].sort((a, b) => a.ratio - b.ratio);
+    for (const m of filtered) groups[m.trendCategory].push(m);
+    // Worst trend first within each column — the steepest decline at the top.
+    for (const cat of Object.keys(groups) as TrendCategory[]) {
+      groups[cat].sort((a, b) => a.trend - b.trend);
     }
     return groups;
   }, [filtered]);
@@ -208,7 +219,7 @@ export default function RetentionPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Retention</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Active members grouped by recent attendance vs. their personal baseline · click a name to open their MindBody profile
+            Active members grouped by attendance trend (last 30d vs. prior 30d) · click a name to open their MindBody profile
           </p>
         </div>
         <span
@@ -264,17 +275,20 @@ export default function RetentionPage() {
               key={col.key}
               className="bg-gray-50 border border-gray-200 rounded-xl flex flex-col min-h-[40vh] max-h-[78vh]"
             >
-              <header className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-                <h2
-                  className={`text-sm font-semibold uppercase tracking-wider ${col.text}`}
-                >
-                  {col.label}
-                </h2>
-                <span
-                  className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.pill}`}
-                >
-                  {list.length}
-                </span>
+              <header className="px-4 py-3 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h2
+                    className={`text-sm font-semibold uppercase tracking-wider ${col.text}`}
+                  >
+                    {col.label}
+                  </h2>
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.pill}`}
+                  >
+                    {list.length}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-500 mt-0.5">{col.hint}</p>
               </header>
               <div className="flex-1 overflow-y-auto p-3 scroll-smooth">
                 {loading ? (

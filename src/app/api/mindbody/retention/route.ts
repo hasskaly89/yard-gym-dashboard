@@ -9,7 +9,7 @@ const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 // Active: Foundation T1 (11), TYG Membership (12), Foundation T2 (26), VIP (27), Black Friday Weekly (33)
 const ACTIVE_MEMBERSHIP_IDS = [11, 12, 26, 27, 33];
 
-type RiskCategory = 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'NON_ATTENDER';
+type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
 type RetentionMember = {
   id: string;
@@ -17,13 +17,13 @@ type RetentionMember = {
   lastName: string;
   email: string;
   mobilePhone: string;
-  riskCategory: RiskCategory;
-  recentCount: number;
-  visits60d: number;
-  visits90d: number;
-  expectedVisits: number;
-  ratio: number;
-  activeDate: string;
+  trendCategory: TrendCategory;
+  last30d: number;
+  prior30d: number;
+  last7d: number;
+  prior7d: number;
+  // last 30d / prior 30d, capped at 2.0 (200% growth). 1.0 = same as last month.
+  trend: number;
 };
 
 // --- Cache ---
@@ -79,8 +79,6 @@ type RawClient = {
 type ClientMembership = {
   MembershipId: number;
   Current: boolean;
-  ActiveDate?: string;
-  PaymentDate?: string;
 };
 
 type Visit = {
@@ -89,25 +87,40 @@ type Visit = {
   StartDateTime?: string;
 };
 
-function classify(
-  ratio: number,
-  recentCount: number,
-  tenureDays: number,
-): RiskCategory {
-  if (recentCount === 0 && tenureDays > 14) return 'NON_ATTENDER';
-  if (ratio >= 0.75) return 'LOW_RISK';
-  if (ratio >= 0.4) return 'MEDIUM_RISK';
-  if (ratio >= 0.1) return 'HIGH_RISK';
-  return 'NON_ATTENDER';
+// Trend-based classification. Compares last 30d to prior 30d (days 30-60 ago)
+// so the signal is *change*, not absolute volume — that's how we catch the
+// 6-12 week slide before someone becomes a zero-visit non-attender.
+function classify(last30: number, prior30: number): TrendCategory {
+  if (last30 === 0) return 'STOPPED';
+
+  // Brand-new member with no prior-month baseline — judge on absolute attendance.
+  // ~2 visits/wk is roughly the floor for "engaged."
+  if (prior30 < 2) {
+    if (last30 >= 8) return 'STABLE';
+    if (last30 >= 4) return 'SLOWING';
+    return 'SLIDING';
+  }
+
+  const trend = last30 / prior30;
+  if (trend >= 0.85) return 'STABLE';
+  if (trend >= 0.55) return 'SLOWING';
+  if (trend >= 0.25) return 'SLIDING';
+  return 'STOPPED';
 }
 
 async function fetchRetention(): Promise<RetentionMember[]> {
   const token = await getStaffToken();
   const nowMs = Date.now();
-  const longAgoStr = '2000-01-01';
-  const thirtyDaysAgoMs = nowMs - 30 * 24 * 60 * 60 * 1000;
-  const sixtyDaysAgoMs = nowMs - 60 * 24 * 60 * 60 * 1000;
-  const ninetyDaysAgoMs = nowMs - 90 * 24 * 60 * 60 * 1000;
+  const last7Start = nowMs - 7 * 86400000;
+  const last14Start = nowMs - 14 * 86400000;
+  const last30Start = nowMs - 30 * 86400000;
+  const last60Start = nowMs - 60 * 86400000;
+
+  // Fetch only ~75 days of visits per member — enough headroom for prior-30d
+  // comparison plus a few days of buffer. Much faster than scanning lifetime.
+  const visitWindowStartStr = new Date(nowMs - 75 * 86400000)
+    .toISOString()
+    .split('T')[0];
 
   // Step 1: paginate all clients, keep those with a membership icon
   const memberedClients: RawClient[] = [];
@@ -123,9 +136,9 @@ async function fetchRetention(): Promise<RetentionMember[]> {
     if (offset >= total) break;
   }
 
-  // Step 2: filter to active-tier members; capture ActiveDate from the matching membership
+  // Step 2: filter to clients on an active-tier membership
   const BATCH_SIZE = 30;
-  const activeMembers: Array<{ client: RawClient; activeDate: string }> = [];
+  const activeClients: RawClient[] = [];
 
   for (let i = 0; i < memberedClients.length; i += BATCH_SIZE) {
     const batch = memberedClients.slice(i, i + BATCH_SIZE);
@@ -136,30 +149,27 @@ async function fetchRetention(): Promise<RetentionMember[]> {
           token,
         );
         const memberships: ClientMembership[] = memRes.ClientMemberships || [];
-        const activeMatch = memberships.find(
+        const hasActive = memberships.some(
           (m) => m.Current && ACTIVE_MEMBERSHIP_IDS.includes(m.MembershipId),
         );
-        return { client: c, activeMatch };
+        return { client: c, hasActive };
       }),
     );
 
     for (const r of results) {
       if (r.status !== 'fulfilled') continue;
-      const { client, activeMatch } = r.value;
-      if (!activeMatch) continue;
-      const activeDate = activeMatch.ActiveDate || activeMatch.PaymentDate || '';
-      activeMembers.push({ client, activeDate });
+      if (r.value.hasActive) activeClients.push(r.value.client);
     }
   }
 
-  // Step 3: For each active member, pull all visits and compute retention metrics
-  async function fetchAllVisits(clientId: string): Promise<Visit[]> {
+  // Step 3: for each active member, pull last 75d of visits and compute trend
+  async function fetchVisits(clientId: string): Promise<Visit[]> {
     const visits: Visit[] = [];
     let vOffset = 0;
     const PAGE = 200;
     while (true) {
       const data = await mbFetch(
-        `/client/clientvisits?ClientId=${clientId}&StartDate=${longAgoStr}&limit=${PAGE}&offset=${vOffset}`,
+        `/client/clientvisits?ClientId=${clientId}&StartDate=${visitWindowStartStr}&limit=${PAGE}&offset=${vOffset}`,
         token,
       );
       const page: Visit[] = data.Visits || [];
@@ -173,11 +183,11 @@ async function fetchRetention(): Promise<RetentionMember[]> {
 
   const members: RetentionMember[] = [];
 
-  for (let i = 0; i < activeMembers.length; i += BATCH_SIZE) {
-    const batch = activeMembers.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < activeClients.length; i += BATCH_SIZE) {
+    const batch = activeClients.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
-      batch.map(async ({ client, activeDate }) => {
-        const visits = await fetchAllVisits(client.Id);
+      batch.map(async (client) => {
+        const visits = await fetchVisits(client.Id);
         const filtered = visits.filter((v) => {
           if (v.SignedIn !== true) return false;
           const name = (v.Name || '').toLowerCase();
@@ -185,31 +195,26 @@ async function fetchRetention(): Promise<RetentionMember[]> {
           return true;
         });
 
-        let recentCount = 0;
-        let visits60d = 0;
-        let visits90d = 0;
+        let last7 = 0;
+        let prior7 = 0;
+        let last30 = 0;
+        let prior30 = 0;
         for (const v of filtered) {
           const ts = parseDateMs(v.StartDateTime);
           if (ts === null) continue;
-          if (ts >= thirtyDaysAgoMs) recentCount++;
-          if (ts >= sixtyDaysAgoMs) visits60d++;
-          if (ts >= ninetyDaysAgoMs) visits90d++;
+          if (ts >= last7Start) last7++;
+          else if (ts >= last14Start) prior7++;
+          if (ts >= last30Start) last30++;
+          else if (ts >= last60Start) prior30++;
         }
-        const totalCount = filtered.length;
 
-        const activeMs = parseDateMs(activeDate) ?? nowMs;
-        const tenureDays = Math.max(1, (nowMs - activeMs) / 86400000);
-        const tenureWeeks = tenureDays / 7;
-        const weeklyAvg = tenureWeeks > 0 ? totalCount / tenureWeeks : 0;
-        // Scope the expected-visits window to actual tenure so members who joined
-        // less than 30 days ago aren't unfairly penalised against a full 30-day expectation.
-        const expectedWindowDays = Math.min(tenureDays, 30);
-        const expectedVisits = weeklyAvg * (expectedWindowDays / 7);
-        const ratio =
-          expectedVisits > 0
-            ? Math.min(Math.max(recentCount / expectedVisits, 0), 1)
-            : 0;
-        const riskCategory = classify(ratio, recentCount, tenureDays);
+        const trendCategory = classify(last30, prior30);
+        const trend =
+          prior30 > 0
+            ? Math.min(last30 / prior30, 2)
+            : last30 > 0
+              ? 1
+              : 0;
 
         const member: RetentionMember = {
           id: client.Id,
@@ -217,13 +222,12 @@ async function fetchRetention(): Promise<RetentionMember[]> {
           lastName: client.LastName ?? '',
           email: client.Email ?? '',
           mobilePhone: client.MobilePhone ?? '',
-          riskCategory,
-          recentCount,
-          visits60d,
-          visits90d,
-          expectedVisits: Math.round(expectedVisits * 10) / 10,
-          ratio: Math.round(ratio * 100) / 100,
-          activeDate,
+          trendCategory,
+          last30d: last30,
+          prior30d: prior30,
+          last7d: last7,
+          prior7d: prior7,
+          trend: Math.round(trend * 100) / 100,
         };
         return member;
       }),

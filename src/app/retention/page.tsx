@@ -28,97 +28,110 @@ interface RetentionData {
   error?: string;
 }
 
+// MindBody Business client profile — opens the staff-side member page in a new tab.
+// If your studio uses a different URL pattern, swap this single string.
+const mindBodyProfileUrl = (clientId: string) =>
+  `https://clients.mindbodyonline.com/Admin/Clients/Clients/Edit?clientId=${encodeURIComponent(clientId)}`;
+
 type ColumnDef = {
   key: RiskCategory;
   label: string;
-  accent: string;
-  headerBg: string;
-  border: string;
+  text: string;
   bar: string;
+  pill: string;
+  ring: string;
 };
 
 const COLUMN_DEFS: ColumnDef[] = [
   {
     key: 'LOW_RISK',
     label: 'Low Risk',
-    accent: 'text-green-400',
-    headerBg: 'bg-green-500/10',
-    border: 'border-green-500/30',
-    bar: 'bg-green-500',
+    text: 'text-emerald-700',
+    bar: 'bg-emerald-500',
+    pill: 'bg-emerald-50 text-emerald-700',
+    ring: 'ring-emerald-100',
   },
   {
     key: 'MEDIUM_RISK',
     label: 'Medium Risk',
-    accent: 'text-yellow-400',
-    headerBg: 'bg-yellow-500/10',
-    border: 'border-yellow-500/30',
-    bar: 'bg-yellow-500',
+    text: 'text-amber-700',
+    bar: 'bg-amber-500',
+    pill: 'bg-amber-50 text-amber-700',
+    ring: 'ring-amber-100',
   },
   {
     key: 'HIGH_RISK',
     label: 'High Risk',
-    accent: 'text-red-400',
-    headerBg: 'bg-red-500/10',
-    border: 'border-red-500/30',
-    bar: 'bg-red-500',
+    text: 'text-rose-700',
+    bar: 'bg-rose-500',
+    pill: 'bg-rose-50 text-rose-700',
+    ring: 'ring-rose-100',
   },
   {
     key: 'NON_ATTENDER',
     label: 'Non Attender',
-    accent: 'text-gym-muted',
-    headerBg: 'bg-gym-border',
-    border: 'border-gym-border',
-    bar: 'bg-gym-muted',
+    text: 'text-gray-700',
+    bar: 'bg-gray-400',
+    pill: 'bg-gray-100 text-gray-700',
+    ring: 'ring-gray-100',
   },
 ];
 
 function MemberCard({
   member,
-  bar,
+  col,
   copied,
   onCopy,
 }: {
   member: RetentionMember;
-  bar: string;
+  col: ColumnDef;
   copied: boolean;
   onCopy: (m: RetentionMember) => void;
 }) {
   const percent = Math.round(member.ratio * 100);
   return (
-    <button
-      type="button"
-      onClick={() => onCopy(member)}
-      className="w-full text-left bg-gym-bg border border-gym-border rounded-lg p-3 mb-2 hover:border-gym-text/30 transition"
-    >
-      <div className="flex items-center justify-between mb-1.5 gap-2">
-        <p className="text-gym-text text-sm font-medium truncate">
-          {member.firstName} {member.lastName}
-        </p>
-        <span
-          className={`text-[10px] tracking-wider uppercase shrink-0 ${
-            copied ? 'text-green-400' : 'text-gym-muted'
-          }`}
+    <div className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <a
+          href={mindBodyProfileUrl(member.id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-gray-900 text-sm font-medium truncate hover:text-gym-accent transition flex-1"
+          title="Open MindBody profile"
         >
-          {copied
-            ? 'Copied'
-            : member.mobilePhone
-              ? 'Tap to copy'
-              : 'No phone'}
-        </span>
+          {member.firstName} {member.lastName}
+        </a>
+        {member.mobilePhone && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              onCopy(member);
+            }}
+            title={copied ? 'Copied' : `Copy ${member.mobilePhone}`}
+            className={`shrink-0 text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border transition ${
+              copied
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700'
+            }`}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        )}
       </div>
-      <p className="text-gym-muted text-xs mb-2">
-        {member.recentCount} / {member.expectedVisits} visits · 30d
-      </p>
-      <div className="h-1.5 bg-gym-border rounded-full overflow-hidden">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-xs text-gray-500">
+          {member.recentCount} / {member.expectedVisits} · 30d
+        </p>
+        <p className={`text-xs font-semibold ${col.text}`}>{percent}%</p>
+      </div>
+      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         <div
-          className={`h-full ${bar} transition-all`}
+          className={`h-full ${col.bar} transition-all`}
           style={{ width: `${Math.max(percent, 2)}%` }}
         />
       </div>
-      <p className="text-gym-muted text-[10px] mt-1.5">
-        {percent}% of expected
-      </p>
-    </button>
+    </div>
   );
 }
 
@@ -187,28 +200,28 @@ export default function RetentionPage() {
         1500,
       );
     } catch {
-      // ignore clipboard errors silently
+      // clipboard blocked — ignore silently
     }
   }
 
   return (
-    <div className="p-8">
+    <div className="p-8 min-h-screen bg-white">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gym-text">Retention</h1>
-          <p className="text-gym-muted text-sm mt-1">
-            Active members grouped by attendance vs. their personal baseline · tap a card to copy phone
+          <h1 className="text-2xl font-bold text-gray-900">Retention</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            Active members grouped by recent attendance vs. their personal baseline · click a name to open their MindBody profile
           </p>
         </div>
         <span
           className={`text-xs px-3 py-1 rounded-full font-medium ${
             loading
-              ? 'bg-yellow-500/10 text-yellow-400'
+              ? 'bg-amber-50 text-amber-700'
               : error
-                ? 'bg-red-500/10 text-red-400'
+                ? 'bg-rose-50 text-rose-700'
                 : data?.mock
-                  ? 'bg-blue-500/10 text-blue-400'
-                  : 'bg-green-500/10 text-green-400'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'bg-emerald-50 text-emerald-700'
           }`}
         >
           {loading
@@ -222,8 +235,8 @@ export default function RetentionPage() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 mb-6">
-          <p className="text-red-400 text-sm">{error}</p>
+        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-6">
+          <p className="text-rose-700 text-sm">{error}</p>
         </div>
       )}
 
@@ -233,13 +246,13 @@ export default function RetentionPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search members by name…"
-          className="flex-1 bg-gym-surface border border-gym-border rounded-lg px-4 py-2.5 text-sm text-gym-text placeholder:text-gym-muted focus:border-gym-text/30"
+          className="flex-1 bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:ring-2 focus:ring-gray-100"
         />
         <button
           type="button"
           onClick={() => load(true)}
           disabled={refreshing || loading}
-          className="px-4 py-2.5 bg-gym-surface border border-gym-border rounded-lg text-sm text-gym-text hover:border-gym-text/30 disabled:opacity-50"
+          className="px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50"
         >
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -251,27 +264,27 @@ export default function RetentionPage() {
           return (
             <section
               key={col.key}
-              className={`bg-gym-surface border ${col.border} rounded-xl flex flex-col min-h-[40vh] max-h-[75vh]`}
+              className="bg-gray-50 border border-gray-200 rounded-xl flex flex-col min-h-[40vh] max-h-[78vh]"
             >
-              <header
-                className={`${col.headerBg} px-4 py-3 rounded-t-xl border-b border-gym-border flex items-center justify-between`}
-              >
+              <header className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                 <h2
-                  className={`text-sm font-semibold uppercase tracking-wider ${col.accent}`}
+                  className={`text-sm font-semibold uppercase tracking-wider ${col.text}`}
                 >
                   {col.label}
                 </h2>
-                <span className={`text-sm font-bold ${col.accent}`}>
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.pill}`}
+                >
                   {list.length}
                 </span>
               </header>
               <div className="flex-1 overflow-y-auto p-3 scroll-smooth">
                 {loading ? (
-                  <p className="text-gym-muted text-xs text-center py-8">
+                  <p className="text-gray-400 text-xs text-center py-8">
                     Loading…
                   </p>
                 ) : list.length === 0 ? (
-                  <p className="text-gym-muted text-xs text-center py-8">
+                  <p className="text-gray-400 text-xs text-center py-8">
                     No members
                   </p>
                 ) : (
@@ -279,7 +292,7 @@ export default function RetentionPage() {
                     <MemberCard
                       key={m.id}
                       member={m}
-                      bar={col.bar}
+                      col={col}
                       copied={copiedId === m.id}
                       onCopy={copyPhone}
                     />
@@ -292,7 +305,7 @@ export default function RetentionPage() {
       </div>
 
       {!loading && data?.updatedAt && (
-        <p className="text-gym-muted text-xs text-center mt-8">
+        <p className="text-gray-400 text-xs text-center mt-8">
           Last updated:{' '}
           {new Date(data.updatedAt).toLocaleString('en-AU', {
             timeZone: 'Australia/Sydney',

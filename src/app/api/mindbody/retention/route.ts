@@ -9,6 +9,10 @@ const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 // Active: Foundation T1 (11), TYG Membership (12), Foundation T2 (26), VIP (27), Black Friday Weekly (33)
 const ACTIVE_MEMBERSHIP_IDS = [11, 12, 26, 27, 33];
 
+// GHL location id — shipped to the client so the Retention page can build
+// "open contact in GHL" links per member. Not sensitive; it's in the URL.
+const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
+
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
 type RetentionMember = {
@@ -258,7 +262,7 @@ function triggerBackgroundRefresh() {
 
 export async function GET(request: Request) {
   if (!API_KEY) {
-    return NextResponse.json({ mock: true, members: [] });
+    return NextResponse.json({ mock: true, members: [], ghlLocationId: GHL_LOCATION_ID });
   }
 
   const url = new URL(request.url);
@@ -272,7 +276,12 @@ export async function GET(request: Request) {
   const isFresh = cachedData && cacheAge < CACHE_TTL;
 
   if (isFresh) {
-    return NextResponse.json({ mock: false, cached: true, ...cachedData });
+    return NextResponse.json({
+      mock: false,
+      cached: true,
+      ghlLocationId: GHL_LOCATION_ID,
+      ...cachedData,
+    });
   }
 
   // Stale cache: serve immediately, refresh in background
@@ -282,6 +291,7 @@ export async function GET(request: Request) {
       mock: false,
       cached: true,
       refreshing: true,
+      ghlLocationId: GHL_LOCATION_ID,
       ...cachedData,
     });
   }
@@ -291,7 +301,12 @@ export async function GET(request: Request) {
     const members = await fetchRetention();
     cachedData = { members, updatedAt: new Date().toISOString() };
     cacheTimestamp = Date.now();
-    return NextResponse.json({ mock: false, cached: false, ...cachedData });
+    return NextResponse.json({
+      mock: false,
+      cached: false,
+      ghlLocationId: GHL_LOCATION_ID,
+      ...cachedData,
+    });
   } catch (error) {
     console.error('Retention API error:', error);
     return NextResponse.json(

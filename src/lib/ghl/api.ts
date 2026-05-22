@@ -1,5 +1,7 @@
 const V1 = 'https://rest.gohighlevel.com/v1'
+const V2 = 'https://services.leadconnectorhq.com'
 const API_KEY = () => process.env.GHL_API_KEY ?? ''
+const PRIVATE_TOKEN = () => process.env.GHL_PRIVATE_TOKEN ?? ''
 const LOCATION_ID = () => process.env.GHL_LOCATION_ID ?? ''
 
 async function ghlFetch(path: string, options: RequestInit = {}) {
@@ -18,6 +20,21 @@ async function ghlFetch(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
+async function ghlV2Fetch(path: string) {
+  const res = await fetch(`${V2}${path}`, {
+    headers: {
+      Authorization: `Bearer ${PRIVATE_TOKEN()}`,
+      Version: '2021-07-28',
+      Accept: 'application/json',
+    },
+  })
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`GHL v2 ${res.status}: ${body.slice(0, 200)}`)
+  }
+  return res.json()
+}
+
 export interface GHLContactPayload {
   firstName: string
   lastName: string
@@ -28,13 +45,21 @@ export interface GHLContactPayload {
 }
 
 export async function findGHLContactByEmail(email: string): Promise<string | null> {
+  // GHL v1 /contacts?query= returns 404 (deprecated). Use v2's
+  // /contacts/search/duplicate which is the canonical "find by email" lookup
+  // and authenticates with the Private Integration Token.
+  if (!PRIVATE_TOKEN() || !LOCATION_ID()) return null
   try {
-    const data = await ghlFetch(
-      `/contacts/?locationId=${LOCATION_ID()}&query=${encodeURIComponent(email)}&limit=1`
+    const data = await ghlV2Fetch(
+      `/contacts/search/duplicate?locationId=${encodeURIComponent(LOCATION_ID())}&email=${encodeURIComponent(email)}`,
     )
-    const contacts = data.contacts ?? []
-    return contacts.length > 0 ? contacts[0].id : null
-  } catch {
+    return data.contact?.id ?? null
+  } catch (err) {
+    // Don't spam logs for "no duplicate found" — that's a normal 404 here.
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('404')) {
+      console.error('[GHL] findGHLContactByEmail failed for', email, msg)
+    }
     return null
   }
 }

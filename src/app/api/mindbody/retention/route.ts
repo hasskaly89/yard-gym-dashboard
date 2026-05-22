@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { findGHLContactByEmail } from '@/lib/ghl/api';
 
 const MB_BASE = 'https://api.mindbodyonline.com/public/v6';
 const SITE_ID = process.env.MINDBODY_SITE_ID ?? '-99';
@@ -9,9 +10,13 @@ const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 // Active: Foundation T1 (11), TYG Membership (12), Foundation T2 (26), VIP (27), Black Friday Weekly (33)
 const ACTIVE_MEMBERSHIP_IDS = [11, 12, 26, 27, 33];
 
-// GHL location id — shipped to the client so the Retention page can build
-// "open contact in GHL" links per member. Not sensitive; it's in the URL.
+// GHL portal URL + location id — both shipped to the client so the Retention
+// page can build "open contact in GHL" links per member. Not sensitive; they
+// appear in URLs. The portal URL is the GHL whitelabel domain for this studio;
+// change here (or override with GHL_PORTAL_URL env var) if it ever moves.
 const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
+const GHL_PORTAL_URL =
+  process.env.GHL_PORTAL_URL ?? 'https://crm.theyardgym.com.au';
 
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
@@ -28,6 +33,9 @@ type RetentionMember = {
   prior7d: number;
   // last 30d / prior 30d, capped at 2.0 (200% growth). 1.0 = same as last month.
   trend: number;
+  // Resolved GHL contact id, when we could find one by the member's email.
+  // null when the member has no email or no matching GHL contact yet.
+  ghlContactId: string | null;
 };
 
 // --- Cache ---
@@ -232,6 +240,7 @@ async function fetchRetention(): Promise<RetentionMember[]> {
           last7d: last7,
           prior7d: prior7,
           trend: Math.round(trend * 100) / 100,
+          ghlContactId: null,
         };
         return member;
       }),
@@ -240,6 +249,21 @@ async function fetchRetention(): Promise<RetentionMember[]> {
     for (const r of results) {
       if (r.status === 'fulfilled') members.push(r.value);
     }
+  }
+
+  // Step 4: enrich with GHL contact ids — one lookup per member with an email.
+  // Small concurrency (10) to stay under GHL's rate limit; failures are silent
+  // so a member without a GHL match just won't get a clickable GHL chip.
+  const GHL_BATCH = 10;
+  for (let i = 0; i < members.length; i += GHL_BATCH) {
+    const slice = members.slice(i, i + GHL_BATCH);
+    await Promise.allSettled(
+      slice.map(async (m) => {
+        if (!m.email) return;
+        const id = await findGHLContactByEmail(m.email);
+        if (id) m.ghlContactId = id;
+      }),
+    );
   }
 
   return members;
@@ -262,7 +286,12 @@ function triggerBackgroundRefresh() {
 
 export async function GET(request: Request) {
   if (!API_KEY) {
-    return NextResponse.json({ mock: true, members: [], ghlLocationId: GHL_LOCATION_ID });
+    return NextResponse.json({
+      mock: true,
+      members: [],
+      ghlLocationId: GHL_LOCATION_ID,
+      ghlPortalUrl: GHL_PORTAL_URL,
+    });
   }
 
   const url = new URL(request.url);
@@ -280,6 +309,7 @@ export async function GET(request: Request) {
       mock: false,
       cached: true,
       ghlLocationId: GHL_LOCATION_ID,
+      ghlPortalUrl: GHL_PORTAL_URL,
       ...cachedData,
     });
   }
@@ -292,6 +322,7 @@ export async function GET(request: Request) {
       cached: true,
       refreshing: true,
       ghlLocationId: GHL_LOCATION_ID,
+      ghlPortalUrl: GHL_PORTAL_URL,
       ...cachedData,
     });
   }
@@ -305,6 +336,7 @@ export async function GET(request: Request) {
       mock: false,
       cached: false,
       ghlLocationId: GHL_LOCATION_ID,
+      ghlPortalUrl: GHL_PORTAL_URL,
       ...cachedData,
     });
   } catch (error) {

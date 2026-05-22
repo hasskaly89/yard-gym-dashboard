@@ -16,11 +16,13 @@ interface RetentionMember {
   last7d: number;
   prior7d: number;
   trend: number;
+  ghlContactId: string | null;
 }
 
 interface RetentionData {
   members: RetentionMember[];
   ghlLocationId?: string;
+  ghlPortalUrl?: string;
   mock?: boolean;
   cached?: boolean;
   refreshing?: boolean;
@@ -31,10 +33,14 @@ interface RetentionData {
 const mindBodyProfileUrl = (clientId: string) =>
   `https://clients.mindbodyonline.com/app/clients/${encodeURIComponent(clientId)}/client-info`;
 
-// GHL Conversations: deep-link to the location's contacts search pre-filled
-// with the member's phone. Staff land on the contact, click → conversation.
-const ghlContactSearchUrl = (locationId: string, phone: string) =>
-  `https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts?search=${encodeURIComponent(phone)}`;
+// Deep-link to a specific contact in the GHL whitelabel portal — one click
+// from a retention card straight to the contact detail / conversation panel.
+const ghlContactDetailUrl = (
+  portalUrl: string,
+  locationId: string,
+  contactId: string,
+) =>
+  `${portalUrl}/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(contactId)}`;
 
 type ColumnDef = {
   key: TrendCategory;
@@ -93,18 +99,22 @@ function MemberCard({
   col,
   copied,
   ghlLocationId,
+  ghlPortalUrl,
   onCopy,
 }: {
   member: RetentionMember;
   col: ColumnDef;
   copied: boolean;
   ghlLocationId: string;
+  ghlPortalUrl: string;
   onCopy: (m: RetentionMember) => void;
 }) {
   // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
   // Cap at 100% so growth doesn't visually swamp the column.
   const barPct = Math.min(Math.round(member.trend * 100), 100);
-  const showGhl = Boolean(ghlLocationId && member.mobilePhone);
+  const showGhl = Boolean(
+    ghlLocationId && ghlPortalUrl && member.ghlContactId,
+  );
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition">
@@ -121,10 +131,14 @@ function MemberCard({
         <div className="flex items-center gap-1 shrink-0">
           {showGhl && (
             <a
-              href={ghlContactSearchUrl(ghlLocationId, member.mobilePhone)}
+              href={ghlContactDetailUrl(
+                ghlPortalUrl,
+                ghlLocationId,
+                member.ghlContactId!,
+              )}
               target="_blank"
               rel="noopener noreferrer"
-              title={`Open in GHL (search by ${member.mobilePhone})`}
+              title="Open in GHL"
               className="text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
             >
               GHL
@@ -329,6 +343,7 @@ export default function RetentionPage() {
                       col={col}
                       copied={copiedId === m.id}
                       ghlLocationId={data?.ghlLocationId ?? ''}
+                      ghlPortalUrl={data?.ghlPortalUrl ?? ''}
                       onCopy={copyPhone}
                     />
                   ))

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { findGHLContactByEmail } from '@/lib/ghl/api';
+import { findGHLContactByEmail, findGHLContactByPhone } from '@/lib/ghl/api';
 
 const MB_BASE = 'https://api.mindbodyonline.com/public/v6';
 const SITE_ID = process.env.MINDBODY_SITE_ID ?? '-99';
@@ -251,19 +251,33 @@ async function fetchRetention(): Promise<RetentionMember[]> {
     }
   }
 
-  // Step 4: enrich with GHL contact ids — one lookup per member with an email.
-  // Small concurrency (10) to stay under GHL's rate limit; failures are silent
-  // so a member without a GHL match just won't get a clickable GHL chip.
-  const GHL_BATCH = 10;
+  // Step 4: enrich with GHL contact ids — email first, then phone as a
+  // fallback (lots of members have a different email in GHL vs MindBody but
+  // phone is consistent). GHL v2 rate-limits aggressively so we keep
+  // concurrency low (3) and pause briefly between batches; the v2Fetch helper
+  // also retries 429s. Failures are silent — no match just means no chip.
+  const GHL_BATCH = 3;
+  const GHL_BATCH_DELAY_MS = 350;
   for (let i = 0; i < members.length; i += GHL_BATCH) {
     const slice = members.slice(i, i + GHL_BATCH);
     await Promise.allSettled(
       slice.map(async (m) => {
-        if (!m.email) return;
-        const id = await findGHLContactByEmail(m.email);
-        if (id) m.ghlContactId = id;
+        if (m.email) {
+          const id = await findGHLContactByEmail(m.email);
+          if (id) {
+            m.ghlContactId = id;
+            return;
+          }
+        }
+        if (m.mobilePhone) {
+          const id = await findGHLContactByPhone(m.mobilePhone);
+          if (id) m.ghlContactId = id;
+        }
       }),
     );
+    if (i + GHL_BATCH < members.length) {
+      await new Promise((r) => setTimeout(r, GHL_BATCH_DELAY_MS));
+    }
   }
 
   return members;

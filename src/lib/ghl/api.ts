@@ -21,18 +21,28 @@ async function ghlFetch(path: string, options: RequestInit = {}) {
 }
 
 async function ghlV2Fetch(path: string) {
-  const res = await fetch(`${V2}${path}`, {
-    headers: {
-      Authorization: `Bearer ${PRIVATE_TOKEN()}`,
-      Version: '2021-07-28',
-      Accept: 'application/json',
-    },
-  })
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`GHL v2 ${res.status}: ${body.slice(0, 200)}`)
+  // GHL v2 rate limits aggressively — retry on 429 with linear backoff
+  // (1s, then 2s) before giving up. Real not-found responses (404) and other
+  // errors bubble immediately.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${V2}${path}`, {
+      headers: {
+        Authorization: `Bearer ${PRIVATE_TOKEN()}`,
+        Version: '2021-07-28',
+        Accept: 'application/json',
+      },
+    })
+    if (res.status === 429 && attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
+      continue
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`GHL v2 ${res.status}: ${body.slice(0, 200)}`)
+    }
+    return res.json()
   }
-  return res.json()
+  throw new Error('GHL v2 429: rate-limited after retries')
 }
 
 export interface GHLContactPayload {
@@ -42,6 +52,39 @@ export interface GHLContactPayload {
   phone?: string
   tags?: string[]
   customField?: Record<string, string>
+}
+
+// Normalise an AU phone number to E.164 (+61...). GHL stores Australian
+// numbers as +61XXXXXXXXX; MindBody often returns local format "0404..." or
+// just "404..." or already-formatted "+61404...". Returns null if the input
+// is too short to be a real number.
+function toE164AU(raw: string): string | null {
+  if (!raw) return null
+  if (raw.trim().startsWith('+')) return raw.trim().replace(/\s+/g, '')
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length === 10 && digits.startsWith('0')) return '+61' + digits.slice(1)
+  if (digits.length === 9) return '+61' + digits
+  if (digits.startsWith('61') && digits.length >= 11) return '+' + digits
+  if (digits.length >= 8) return '+' + digits
+  return null
+}
+
+export async function findGHLContactByPhone(phone: string): Promise<string | null> {
+  if (!PRIVATE_TOKEN() || !LOCATION_ID()) return null
+  const normalized = toE164AU(phone)
+  if (!normalized) return null
+  try {
+    const data = await ghlV2Fetch(
+      `/contacts/search/duplicate?locationId=${encodeURIComponent(LOCATION_ID())}&number=${encodeURIComponent(normalized)}`,
+    )
+    return data.contact?.id ?? null
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('404')) {
+      console.error('[GHL] findGHLContactByPhone failed for', phone, msg)
+    }
+    return null
+  }
 }
 
 export async function findGHLContactByEmail(email: string): Promise<string | null> {

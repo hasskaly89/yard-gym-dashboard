@@ -1,6 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import TodayCalls, { type TodayCallsMember } from '@/components/retention/TodayCalls';
+import { logContact, snoozeMember } from './actions';
+import type {
+  ContactInfo,
+  ContactStateResponse,
+  SnoozeInfo,
+} from '@/app/api/retention/contact-state/route';
 
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
@@ -17,6 +24,18 @@ interface RetentionMember {
   prior7d: number;
   trend: number;
   ghlContactId: string | null;
+}
+
+function daysSinceIso(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+
+function snoozeDateLabel(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-AU', {
+    timeZone: 'Australia/Sydney',
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
 interface RetentionData {
@@ -100,14 +119,24 @@ function MemberCard({
   copied,
   ghlLocationId,
   ghlPortalUrl,
+  contact,
+  snooze,
+  pending,
   onCopy,
+  onLog,
+  onSnooze,
 }: {
   member: RetentionMember;
   col: ColumnDef;
   copied: boolean;
   ghlLocationId: string;
   ghlPortalUrl: string;
+  contact: ContactInfo | undefined;
+  snooze: SnoozeInfo | undefined;
+  pending: boolean;
   onCopy: (m: RetentionMember) => void;
+  onLog: (m: TodayCallsMember) => void;
+  onSnooze: (m: TodayCallsMember) => void;
 }) {
   // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
   // Cap at 100% so growth doesn't visually swamp the column.
@@ -115,6 +144,13 @@ function MemberCard({
   const showGhl = Boolean(
     ghlLocationId && ghlPortalUrl && member.ghlContactId,
   );
+
+  const isSnoozed =
+    snooze && new Date(snooze.snoozedUntil).getTime() > Date.now();
+  const contactDays =
+    contact && daysSinceIso(contact.contactedAt) <= 14
+      ? daysSinceIso(contact.contactedAt)
+      : null;
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition">
@@ -175,6 +211,37 @@ function MemberCard({
           style={{ width: `${Math.max(barPct, 2)}%` }}
         />
       </div>
+      {(isSnoozed || contactDays !== null) && (
+        <p className="text-[10px] text-gray-500 mt-1.5">
+          {isSnoozed
+            ? `Snoozed until ${snoozeDateLabel(snooze!.snoozedUntil)} by ${snooze!.snoozedByName}`
+            : `Last contact: ${contactDays}d ago by ${contact!.contactedByName}`}
+        </p>
+      )}
+      <div className="flex items-center gap-1 mt-2">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={(e) => {
+            e.preventDefault();
+            onLog(member);
+          }}
+          className="text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition"
+        >
+          Logged ✓
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={(e) => {
+            e.preventDefault();
+            onSnooze(member);
+          }}
+          className="text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition"
+        >
+          Snooze 7d
+        </button>
+      </div>
     </div>
   );
 }
@@ -186,6 +253,11 @@ export default function RetentionPage() {
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [contactState, setContactState] = useState<ContactStateResponse>({
+    contacts: {},
+    snoozes: {},
+  });
+  const [actionPending, setActionPending] = useState<Set<string>>(new Set());
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -206,9 +278,68 @@ export default function RetentionPage() {
     }
   }, []);
 
+  const loadContactState = useCallback(async () => {
+    try {
+      const res = await fetch('/api/retention/contact-state');
+      if (!res.ok) return;
+      const d = (await res.json()) as ContactStateResponse;
+      setContactState(d);
+    } catch {
+      // Best-effort — badges and Today's Calls degrade gracefully without it.
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadContactState();
+  }, [load, loadContactState]);
+
+  const markPending = useCallback((memberId: string, on: boolean) => {
+    setActionPending((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(memberId);
+      else next.delete(memberId);
+      return next;
+    });
+  }, []);
+
+  const handleLog = useCallback(
+    async (m: TodayCallsMember) => {
+      markPending(m.id, true);
+      try {
+        const result = await logContact({
+          memberId: m.id,
+          memberName: `${m.firstName} ${m.lastName}`.trim(),
+          band: m.trendCategory,
+        });
+        if (!result.ok) {
+          setError(result.error);
+        } else {
+          await loadContactState();
+        }
+      } finally {
+        markPending(m.id, false);
+      }
+    },
+    [loadContactState, markPending],
+  );
+
+  const handleSnooze = useCallback(
+    async (m: TodayCallsMember) => {
+      markPending(m.id, true);
+      try {
+        const result = await snoozeMember({ memberId: m.id, days: 7 });
+        if (!result.ok) {
+          setError(result.error);
+        } else {
+          await loadContactState();
+        }
+      } finally {
+        markPending(m.id, false);
+      }
+    },
+    [loadContactState, markPending],
+  );
 
   const members = data?.members ?? [];
 
@@ -235,7 +366,7 @@ export default function RetentionPage() {
     return groups;
   }, [filtered]);
 
-  async function copyPhone(m: RetentionMember) {
+  async function copyPhone(m: TodayCallsMember) {
     if (!m.mobilePhone) return;
     try {
       await navigator.clipboard.writeText(m.mobilePhone);
@@ -303,6 +434,25 @@ export default function RetentionPage() {
         </button>
       </div>
 
+      {!loading && members.length > 0 && (
+        <TodayCalls
+          members={filtered}
+          contacts={contactState.contacts}
+          snoozes={contactState.snoozes}
+          ghlLocationId={data?.ghlLocationId ?? ''}
+          ghlPortalUrl={data?.ghlPortalUrl ?? ''}
+          copiedId={copiedId}
+          actionPending={actionPending}
+          refreshedAt={data?.updatedAt}
+          totalAtRisk={
+            filtered.filter((m) => m.trendCategory !== 'STABLE').length
+          }
+          onCopy={copyPhone}
+          onLog={handleLog}
+          onSnooze={handleSnooze}
+        />
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {COLUMN_DEFS.map((col) => {
           const list = grouped[col.key];
@@ -344,7 +494,12 @@ export default function RetentionPage() {
                       copied={copiedId === m.id}
                       ghlLocationId={data?.ghlLocationId ?? ''}
                       ghlPortalUrl={data?.ghlPortalUrl ?? ''}
+                      contact={contactState.contacts[m.id]}
+                      snooze={contactState.snoozes[m.id]}
+                      pending={actionPending.has(m.id)}
                       onCopy={copyPhone}
+                      onLog={handleLog}
+                      onSnooze={handleSnooze}
                     />
                   ))
                 )}

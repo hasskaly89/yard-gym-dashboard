@@ -7,6 +7,10 @@
     {
       "path": "/api/milestones/cron",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/eod-summary",
+      "schedule": "0 8 * * *"
     }
   ]
 }

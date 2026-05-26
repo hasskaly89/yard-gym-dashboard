@@ -31,19 +31,20 @@ type SnoozeRow = {
   created_at: string;
 };
 
-function sydneyDayBoundsUtc(now = new Date()): {
-  startUtc: Date;
-  endUtc: Date;
-  label: string;
-} {
+function sydneyDayBoundsUtc(
+  now = new Date(),
+  daysBack = 0,
+): { startUtc: Date; endUtc: Date; label: string } {
   // toZonedTime returns a Date whose wall-clock fields represent Sydney time;
   // we apply startOfDay/endOfDay against that, then convert back to real UTC
   // via fromZonedTime so the resulting ISO strings can be passed to Postgres.
-  const sydneyNow = toZonedTime(now, TZ);
+  // daysBack=1 reports on yesterday, which is what the morning cron needs.
+  const shifted = new Date(now.getTime() - daysBack * 86400000);
+  const sydneyShifted = toZonedTime(shifted, TZ);
   return {
-    startUtc: fromZonedTime(startOfDay(sydneyNow), TZ),
-    endUtc: fromZonedTime(endOfDay(sydneyNow), TZ),
-    label: formatInTimeZone(now, TZ, 'EEE d MMM yyyy'),
+    startUtc: fromZonedTime(startOfDay(sydneyShifted), TZ),
+    endUtc: fromZonedTime(endOfDay(sydneyShifted), TZ),
+    label: formatInTimeZone(shifted, TZ, 'EEE d MMM yyyy'),
   };
 }
 
@@ -64,8 +65,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Morning cron reports on yesterday by default. ?today=1 forces same-day
+  // (useful for manual test sends or end-of-day spot checks).
+  const url = new URL(req.url);
+  const daysBack = url.searchParams.get('today') === '1' ? 0 : 1;
+
   const supabase = createAdminClient();
-  const { startUtc, endUtc, label } = sydneyDayBoundsUtc();
+  const { startUtc, endUtc, label } = sydneyDayBoundsUtc(new Date(), daysBack);
 
   const [{ data: contactsToday }, { data: snoozesToday }, { data: weekContacts }] =
     await Promise.all([
@@ -125,7 +131,7 @@ export async function GET(req: NextRequest) {
   const text = [
     `Yard Retention — ${label}`,
     '',
-    `CHECK-INS LOGGED TODAY: ${contacts.length}`,
+    `CHECK-INS LOGGED: ${contacts.length}`,
     userBreakdown || '  (none)',
     '',
     'BY BAND REACHED:',
@@ -133,12 +139,12 @@ export async function GET(req: NextRequest) {
     `  SLOWING: ${byBand.SLOWING}`,
     `  STOPPED: ${byBand.STOPPED}`,
     '',
-    'TOP 5 LOGGED TODAY:',
+    'TOP 5 LOGGED:',
     topLines,
     '',
-    `SNOOZED TODAY: ${snoozes.length}`,
+    `SNOOZED: ${snoozes.length}`,
     '',
-    `WEEK SO FAR (last 7 days): ${weekContacts?.length ?? 0} check-ins`,
+    `LAST 7 DAYS: ${weekContacts?.length ?? 0} check-ins`,
     '',
     '— Yard Dashboard',
     DASHBOARD_URL,

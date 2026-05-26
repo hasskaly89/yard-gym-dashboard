@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { startOfDay, endOfDay } from 'date-fns';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-// Heads-up: this still uses Resend per the original plan. The repo also has
-// nodemailer + Gmail SMTP wired in /api/timesheets/route.ts — switching to that
-// is a ~15-line change if you'd rather skip the Resend signup.
+// Uses Gmail SMTP via the same env vars as /api/timesheets/route.ts:
+// SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS. No additional setup needed.
 
 const TZ = 'Australia/Sydney';
 const RECIPIENTS = [
@@ -14,9 +13,6 @@ const RECIPIENTS = [
   'jasminrose.albos@remotetalentstaff.com',
 ];
 const REPLY_TO = 'hasskaly89@gmail.com';
-const FROM =
-  process.env.EOD_FROM_ADDRESS ??
-  'Yard Dashboard <retention@theyardgym.com.au>';
 const DASHBOARD_URL =
   process.env.DASHBOARD_URL ?? 'https://yard-gym-dashboard.vercel.app';
 
@@ -59,10 +55,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  if (!smtpUser || !smtpPass) {
     return NextResponse.json(
-      { error: 'RESEND_API_KEY not configured' },
+      { error: 'SMTP_USER / SMTP_PASS not configured' },
       { status: 500 },
     );
   }
@@ -149,11 +146,17 @@ export async function GET(req: NextRequest) {
 
   const subject = `Yard Retention · ${label} · ${contacts.length} check-ins`;
 
-  const resend = new Resend(apiKey);
-  const sendResults = await Promise.all(
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    secure: false,
+    auth: { user: smtpUser, pass: smtpPass },
+  });
+
+  const sendResults = await Promise.allSettled(
     RECIPIENTS.map((to) =>
-      resend.emails.send({
-        from: FROM,
+      transporter.sendMail({
+        from: `"Yard Dashboard" <${smtpUser}>`,
         to,
         replyTo: REPLY_TO,
         subject,
@@ -162,13 +165,15 @@ export async function GET(req: NextRequest) {
     ),
   );
 
-  const failed = sendResults.filter((r) => r.error);
+  const failed = sendResults.filter((r) => r.status === 'rejected');
   if (failed.length) {
     return NextResponse.json(
       {
         ok: false,
         sent: sendResults.length - failed.length,
-        errors: failed.map((r) => r.error),
+        errors: failed.map((r) =>
+          r.status === 'rejected' ? String(r.reason) : null,
+        ),
       },
       { status: 500 },
     );

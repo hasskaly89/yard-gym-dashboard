@@ -1,85 +1,105 @@
-import { NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/admin'
+import { NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+
+// Milestone bands (existing list from src/lib/milestones/detect.ts).
+// Each member is grouped into their HIGHEST band achieved.
+export const MILESTONE_BANDS = [
+  1000, 500, 300, 250, 200, 150, 100, 50, 25,
+] as const;
+
+export type MilestoneBand = (typeof MILESTONE_BANDS)[number];
+
+export type MilestoneMember = {
+  mindbody_client_id: string;
+  first_name: string;
+  last_name: string;
+  total_visit_count: number;
+  last_visit_date: string | null;
+};
+
+export type MilestoneBandGroup = {
+  band: MilestoneBand;
+  label: string;
+  members: MilestoneMember[];
+};
+
+export type MilestonesResponse = {
+  bands: MilestoneBandGroup[];
+  totalActiveMembers: number;
+  totalSignedInClasses: number;
+  topMember: MilestoneMember | null;
+  underThreshold: number; // active members under the lowest band (25)
+  updatedAt: string;
+};
+
+function bandFor(count: number): MilestoneBand | null {
+  for (const b of MILESTONE_BANDS) {
+    if (count >= b) return b;
+  }
+  return null;
+}
+
+function labelFor(band: MilestoneBand): string {
+  return `${band}+ Classes`;
+}
 
 export async function GET() {
-  const supabase = createAdminClient()
-  const today = new Date().toISOString().split('T')[0]
-  const monthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0]
+  const supabase = createAdminClient();
 
-  const [
-    todayMilestones,
-    recentActivity,
-    atRiskMembers,
-    monthlyStats,
-    upcomingBirthdays,
-  ] = await Promise.all([
-    // Today's milestones
-    supabase
-      .from('milestone_log')
-      .select('*, members!inner(first_name, last_name)')
-      .gte('triggered_at', today + 'T00:00:00')
-      .order('triggered_at', { ascending: false }),
+  const { data: members, error } = await supabase
+    .from('members')
+    .select(
+      'mindbody_client_id, first_name, last_name, total_visit_count, last_visit_date',
+    )
+    .eq('status', 'active')
+    .order('total_visit_count', { ascending: false });
 
-    // Recent activity (last 20)
-    supabase
-      .from('milestone_log')
-      .select('*, members!inner(first_name, last_name)')
-      .order('triggered_at', { ascending: false })
-      .limit(20),
+  if (error || !members) {
+    return NextResponse.json(
+      { error: error?.message ?? 'Failed to load members' },
+      { status: 500 },
+    );
+  }
 
-    // At-risk members (14+ days inactive)
-    supabase
-      .from('members')
-      .select('*')
-      .eq('status', 'active')
-      .not('last_visit_date', 'is', null)
-      .lt(
-        'last_visit_date',
-        new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
-      )
-      .order('last_visit_date', { ascending: true })
-      .limit(20),
+  const groups = new Map<MilestoneBand, MilestoneMember[]>();
+  let underThreshold = 0;
+  let totalClasses = 0;
+  let topMember: MilestoneMember | null = null;
 
-    // Monthly milestone count
-    supabase
-      .from('milestone_log')
-      .select('id', { count: 'exact', head: true })
-      .gte('triggered_at', monthAgo + 'T00:00:00'),
-
-    // Upcoming birthdays (next 7 days)
-    supabase
-      .from('members')
-      .select('mindbody_client_id, first_name, last_name, birth_date')
-      .eq('status', 'active')
-      .not('birth_date', 'is', null),
-  ])
-
-  // Filter upcoming birthdays in JS (Supabase can't easily do month/day matching)
-  const now = new Date()
-  const upcoming = (upcomingBirthdays.data ?? []).filter((m) => {
-    if (!m.birth_date) return false
-    const bd = new Date(m.birth_date + 'T00:00:00')
-    for (let d = 0; d <= 7; d++) {
-      const check = new Date(now)
-      check.setDate(check.getDate() + d)
-      if (
-        bd.getMonth() === check.getMonth() &&
-        bd.getDate() === check.getDate()
-      ) {
-        return true
-      }
+  for (const m of members) {
+    const count = m.total_visit_count ?? 0;
+    totalClasses += count;
+    if (!topMember || count > (topMember.total_visit_count ?? 0)) {
+      topMember = m;
     }
-    return false
-  })
+    const band = bandFor(count);
+    if (band === null) {
+      underThreshold++;
+      continue;
+    }
+    if (!groups.has(band)) groups.set(band, []);
+    groups.get(band)!.push(m);
+  }
 
-  return NextResponse.json({
-    todayMilestones: todayMilestones.data ?? [],
-    recentActivity: recentActivity.data ?? [],
-    atRiskMembers: atRiskMembers.data ?? [],
-    monthlyMilestoneCount: monthlyStats.count ?? 0,
-    upcomingBirthdays: upcoming,
-    atRiskCount: atRiskMembers.data?.length ?? 0,
-  })
+  // Hide empty bands; order high → low.
+  const bands: MilestoneBandGroup[] = MILESTONE_BANDS.filter((b) =>
+    groups.has(b),
+  ).map((b) => ({
+    band: b,
+    label: labelFor(b),
+    members: (groups.get(b) ?? []).sort(
+      (a, b) => (b.total_visit_count ?? 0) - (a.total_visit_count ?? 0),
+    ),
+  }));
+
+  const body: MilestonesResponse = {
+    bands,
+    totalActiveMembers: members.length,
+    totalSignedInClasses: totalClasses,
+    topMember,
+    underThreshold,
+    updatedAt: new Date().toISOString(),
+  };
+
+  return NextResponse.json(body);
 }

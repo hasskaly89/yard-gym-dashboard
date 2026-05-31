@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { checkBirthday, checkAnniversary, checkInactivity } from '@/lib/milestones/detect'
 import { triggerMilestone } from '@/lib/milestones/trigger'
+import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
 
 export async function GET(req: NextRequest) {
   // Auth: Vercel Cron sends CRON_SECRET, or use SYNC_SECRET for manual calls
@@ -15,10 +16,24 @@ export async function GET(req: NextRequest) {
 
   const supabase = createAdminClient()
   const summary = {
+    visitSync: {
+      scanned: 0,
+      updated: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    },
     birthdays: 0,
     anniversaries: 0,
     inactivity: { 7: 0, 14: 0, 21: 0, 30: 0 } as Record<number, number>,
     errors: [] as string[],
+  }
+
+  // Step 0: refresh per-member visit counts from MindBody so total_visit_count
+  // and last_visit_date are current before we evaluate any milestones below.
+  try {
+    summary.visitSync = await syncMemberVisitCounts()
+  } catch (err) {
+    summary.errors.push(`visit sync: ${(err as Error).message}`)
   }
 
   // Fetch all active members

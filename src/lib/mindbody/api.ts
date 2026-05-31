@@ -17,8 +17,8 @@ export async function getMBToken(): Promise<string> {
       ...mbHeaders(),
     },
     body: JSON.stringify({
-      Username: process.env.MINDBODY_STAFF_USERNAME,
-      Password: process.env.MINDBODY_STAFF_PASSWORD,
+      Username: process.env.MINDBODY_USERNAME,
+      Password: process.env.MINDBODY_PASSWORD,
     }),
   })
   if (!res.ok) throw new Error(`MB token error: ${await res.text()}`)

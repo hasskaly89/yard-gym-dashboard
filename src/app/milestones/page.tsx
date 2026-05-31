@@ -1,12 +1,66 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   MilestoneBand,
   MilestoneBandGroup,
   MilestoneMember,
   MilestonesResponse,
 } from '@/app/api/milestones/route';
+import type {
+  LeaderboardEntry,
+  LeaderboardResponse,
+} from '@/app/api/milestones/leaderboard/route';
+
+const DATA_START_YEAR = 2024;
+const DATA_START_MONTH = 4; // 1-based; April 2024
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : String(n);
+}
+
+function currentMonthKey(): string {
+  return new Date().toLocaleString('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+  }); // "2026-05" (en-CA formats as YYYY-MM with the right options)
+}
+
+function buildMonthList(): { key: string; label: string }[] {
+  // From current Sydney month back to DATA_START. Most recent first.
+  const now = new Date();
+  const sydneyParts = now.toLocaleDateString('en-CA', {
+    timeZone: 'Australia/Sydney',
+    year: 'numeric',
+    month: '2-digit',
+  });
+  const [curYearStr, curMonthStr] = sydneyParts.split('-');
+  const curYear = parseInt(curYearStr, 10);
+  const curMonth = parseInt(curMonthStr, 10);
+
+  const out: { key: string; label: string }[] = [];
+  let y = curYear;
+  let m = curMonth;
+  while (y > DATA_START_YEAR || (y === DATA_START_YEAR && m >= DATA_START_MONTH)) {
+    const key = `${y}-${pad2(m)}`;
+    // Build label like "May 2026" from a Date positioned mid-month so TZ
+    // edge cases don't shove us into the wrong month.
+    const labelDate = new Date(Date.UTC(y, m - 1, 15));
+    const label = labelDate.toLocaleDateString('en-AU', {
+      timeZone: 'UTC',
+      month: 'short',
+      year: 'numeric',
+    });
+    out.push({ key, label });
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  return out;
+}
 
 const BAND_STYLE: Record<
   MilestoneBand,
@@ -98,6 +152,13 @@ export default function MilestonesPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
+  const monthList = useMemo(() => buildMonthList(), []);
+  const [activeMonth, setActiveMonth] = useState<string>(() => currentMonthKey());
+  const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(
+    null,
+  );
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -122,6 +183,29 @@ export default function MilestonesPage() {
     };
   }, []);
 
+  const loadLeaderboard = useCallback(async (monthKey: string) => {
+    setLeaderboardLoading(true);
+    try {
+      const res = await fetch(
+        `/api/milestones/leaderboard?month=${encodeURIComponent(monthKey)}`,
+      );
+      const d = (await res.json()) as LeaderboardResponse | { error: string };
+      if ('error' in d) {
+        // Soft-fail — keep prior leaderboard visible.
+        return;
+      }
+      setLeaderboard(d);
+    } catch {
+      // ignore
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLeaderboard(activeMonth);
+  }, [activeMonth, loadLeaderboard]);
+
   const filteredBands = useMemo<MilestoneBandGroup[]>(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
@@ -135,16 +219,6 @@ export default function MilestonesPage() {
       }))
       .filter((g) => g.members.length > 0);
   }, [data, search]);
-
-  const leaderboard = useMemo<MilestoneMember[]>(() => {
-    if (!data) return [];
-    return data.bands
-      .flatMap((g) => g.members)
-      .sort(
-        (a, b) => (b.total_visit_count ?? 0) - (a.total_visit_count ?? 0),
-      )
-      .slice(0, 10);
-  }, [data]);
 
   const avgClasses =
     data && data.totalActiveMembers > 0
@@ -214,20 +288,50 @@ export default function MilestonesPage() {
       </div>
 
       {/* Leaderboard */}
-      {!loading && leaderboard.length > 0 && (
-        <section className="mb-6 bg-white border border-gray-200 rounded-xl p-4 md:p-5">
-          <div className="flex items-end justify-between gap-3 mb-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">
-                Top 10 leaderboard
-              </h2>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Most signed-in classes since 1 Apr 2024
-              </p>
-            </div>
+      <section className="mb-6 bg-white border border-gray-200 rounded-xl p-4 md:p-5">
+        <div className="flex items-end justify-between gap-3 mb-3">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Top 10 leaderboard
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Most signed-in classes
+              {leaderboard?.label ? ` · ${leaderboard.label}` : ''}
+            </p>
           </div>
+          {leaderboardLoading && (
+            <span className="text-xs text-gray-400">Loading…</span>
+          )}
+        </div>
+
+        {/* Month tabs */}
+        <div className="-mx-1 mb-4 flex gap-1 overflow-x-auto pb-1 px-1">
+          {monthList.map((m) => {
+            const isActive = m.key === activeMonth;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setActiveMonth(m.key)}
+                className={`text-xs font-medium uppercase tracking-wide px-3 py-1.5 rounded-full whitespace-nowrap transition border ${
+                  isActive
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {leaderboard && leaderboard.entries.length === 0 ? (
+          <p className="text-sm text-gray-400 py-6 text-center">
+            No signed-in classes recorded in {leaderboard.label}.
+          </p>
+        ) : (
           <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
-            {leaderboard.map((m, i) => (
+            {(leaderboard?.entries ?? []).map((m, i) => (
               <li
                 key={m.mindbody_client_id}
                 className="flex items-center gap-2 p-2 rounded-lg border border-gray-100 bg-gray-50"
@@ -252,16 +356,16 @@ export default function MilestonesPage() {
                   className="text-sm text-gray-900 font-medium truncate hover:underline flex-1"
                   title="Open in MindBody"
                 >
-                  {memberFullName(m)}
+                  {m.first_name} {m.last_name}
                 </a>
                 <span className="text-xs font-semibold text-gray-700 shrink-0">
-                  {formatNumber(m.total_visit_count)}
+                  {formatNumber(m.count)}
                 </span>
               </li>
             ))}
           </ol>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* Search */}
       <div className="mb-4">

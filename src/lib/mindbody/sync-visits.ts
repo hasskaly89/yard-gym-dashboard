@@ -43,24 +43,26 @@ async function fetchAllSignedInVisits(
   return visits;
 }
 
-function countSignedInClasses(visits: Visit[]): {
-  count: number;
+type CleanVisit = { visitAt: string; className: string | null };
+
+function filterSignedInClasses(visits: Visit[]): {
+  clean: CleanVisit[];
   lastVisit: string | null;
 } {
-  let count = 0;
+  const clean: CleanVisit[] = [];
   let lastTs = 0;
   for (const v of visits) {
     if (v.SignedIn !== true) continue;
     const name = (v.Name || '').toLowerCase();
     if (name.includes('creche')) continue;
-    count++;
-    if (v.StartDateTime) {
-      const ts = new Date(v.StartDateTime).getTime();
-      if (!Number.isNaN(ts) && ts > lastTs) lastTs = ts;
-    }
+    if (!v.StartDateTime) continue;
+    const ts = new Date(v.StartDateTime).getTime();
+    if (Number.isNaN(ts)) continue;
+    clean.push({ visitAt: new Date(ts).toISOString(), className: v.Name ?? null });
+    if (ts > lastTs) lastTs = ts;
   }
   return {
-    count,
+    clean,
     lastVisit: lastTs > 0 ? new Date(lastTs).toISOString() : null,
   };
 }
@@ -92,11 +94,37 @@ export async function syncMemberVisitCounts(): Promise<{
     const results = await Promise.allSettled(
       batch.map(async (m) => {
         const visits = await fetchAllSignedInVisits(token, m.mindbody_client_id);
-        const { count, lastVisit } = countSignedInClasses(visits);
+        const { clean, lastVisit } = filterSignedInClasses(visits);
+
+        // Upsert per-visit history. Unique (mindbody_client_id, visit_at)
+        // makes this idempotent on repeated runs. Chunk in 500-row batches
+        // so we stay under Supabase's request size limits for power users.
+        if (clean.length > 0) {
+          const rows = clean.map((v) => ({
+            mindbody_client_id: m.mindbody_client_id,
+            visit_at: v.visitAt,
+            class_name: v.className,
+          }));
+          for (let j = 0; j < rows.length; j += 500) {
+            const chunk = rows.slice(j, j + 500);
+            const { error: vErr } = await supabase
+              .from('member_visits')
+              .upsert(chunk, {
+                onConflict: 'mindbody_client_id,visit_at',
+                ignoreDuplicates: true,
+              });
+            if (vErr) {
+              throw new Error(
+                `${m.mindbody_client_id} visits: ${vErr.message}`,
+              );
+            }
+          }
+        }
+
         const { error: upErr } = await supabase
           .from('members')
           .update({
-            total_visit_count: count,
+            total_visit_count: clean.length,
             last_visit_date: lastVisit,
           })
           .eq('mindbody_client_id', m.mindbody_client_id);

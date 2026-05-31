@@ -4,6 +4,12 @@ import { checkBirthday, checkAnniversary, checkInactivity } from '@/lib/mileston
 import { triggerMilestone } from '@/lib/milestones/trigger'
 import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
 
+// First run takes ~4-5 min to backfill ~1k active members × 2yr of visits.
+// Subsequent daily runs do a full recount (idempotent); duration scales with
+// member count. If this ever times out we'll switch to an incremental sync.
+export const maxDuration = 300
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: NextRequest) {
   // Auth: Vercel Cron sends CRON_SECRET, or use SYNC_SECRET for manual calls
   const authHeader = req.headers.get('authorization')

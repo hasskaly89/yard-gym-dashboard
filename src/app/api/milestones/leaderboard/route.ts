@@ -113,21 +113,31 @@ export async function GET(req: Request) {
 
   // Pull visits within the month, then group + sort + take top 10 in JS.
   // Supabase doesn't support GROUP BY in JS-client queries directly, so an
-  // RPC would be cleaner — but for ~few-thousand rows per month this is fast.
-  const { data: rows, error } = await supabase
-    .from('member_visits')
-    .select('mindbody_client_id')
-    .in('mindbody_client_id', paidIds)
-    .gte('visit_at', startUtc.toISOString())
-    .lt('visit_at', endUtc.toISOString());
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
+  // RPC would be cleaner — but pagination here is good enough at this scale.
+  // PostgREST caps at 1000 rows per request; a typical month is ~3-4k rows,
+  // so we page until exhausted.
+  const PAGE = 1000;
   const counts = new Map<string, number>();
-  for (const r of rows ?? []) {
-    counts.set(r.mindbody_client_id, (counts.get(r.mindbody_client_id) ?? 0) + 1);
+  for (let from = 0; ; from += PAGE) {
+    const { data: rows, error } = await supabase
+      .from('member_visits')
+      .select('mindbody_client_id')
+      .in('mindbody_client_id', paidIds)
+      .gte('visit_at', startUtc.toISOString())
+      .lt('visit_at', endUtc.toISOString())
+      .order('visit_at', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    if (!rows || rows.length === 0) break;
+    for (const r of rows) {
+      counts.set(
+        r.mindbody_client_id,
+        (counts.get(r.mindbody_client_id) ?? 0) + 1,
+      );
+    }
+    if (rows.length < PAGE) break;
   }
 
   const topIds = [...counts.entries()]

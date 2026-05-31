@@ -7,8 +7,10 @@ const API_KEY = process.env.MINDBODY_API_KEY ?? '';
 const USERNAME = process.env.MINDBODY_USERNAME ?? '';
 const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 
-// Active: Foundation T1 (11), TYG Membership (12), Foundation T2 (26), VIP (27), Black Friday Weekly (33)
-const ACTIVE_MEMBERSHIP_IDS = [11, 12, 26, 27, 33];
+// Paid membership tiers — keep in sync with src/lib/mindbody/active-memberships.ts
+// 11 Foundation T1 · 12 TYG Membership · 24 Influencer (Non-Fitness)
+// 26 Foundation T2 (legacy) · 27 VIP · 33 Black Friday Weekly
+const ACTIVE_MEMBERSHIP_IDS = [11, 12, 24, 26, 27, 33];
 
 // GHL portal URL + location id — both shipped to the client so the Retention
 // page can build "open contact in GHL" links per member. Not sensitive; they

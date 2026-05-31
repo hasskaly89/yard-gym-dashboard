@@ -3,12 +3,16 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 // Paid membership tiers — the canonical "this person is a current member"
 // list. Must stay in sync with src/app/api/mindbody/retention/route.ts.
-//   11 — Foundation T1
+//   11 — TYG Membership | Foundation Tier 1
 //   12 — TYG Membership
-//   26 — Foundation T2
-//   27 — VIP
-//   33 — Black Friday Weekly
-export const ACTIVE_MEMBERSHIP_IDS = new Set<number>([11, 12, 26, 27, 33]);
+//   24 — TYG Membership | Influencer (Non-Fitness)
+//   26 — Foundation T2 (legacy; no current holders observed in May 2026)
+//   27 — TYG Membership | VIP
+//   33 — TYG MEMBERSHIP | BLACK FRIDAY | WEEKLY
+// TODO: Friends & Family Membership — ID unknown (no current holders in
+// the May 2026 sample; ask Hassan to look it up in MindBody admin and
+// add the ID here).
+export const ACTIVE_MEMBERSHIP_IDS = new Set<number>([11, 12, 24, 26, 27, 33]);
 
 const BATCH_SIZE = 30;
 const BATCH_DELAY_MS = 200;

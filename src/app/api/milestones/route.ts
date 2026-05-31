@@ -52,6 +52,7 @@ export async function GET() {
       'mindbody_client_id, first_name, last_name, total_visit_count, last_visit_date',
     )
     .eq('status', 'active')
+    .eq('has_paid_membership', true)
     .order('total_visit_count', { ascending: false });
 
   if (error || !members) {

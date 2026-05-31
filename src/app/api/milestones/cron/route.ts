@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { checkBirthday, checkAnniversary, checkInactivity } from '@/lib/milestones/detect'
 import { triggerMilestone } from '@/lib/milestones/trigger'
+import { syncMemberMemberships } from '@/lib/mindbody/active-memberships'
 import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
 
-// First run takes ~4-5 min to backfill ~1k active members × 2yr of visits.
-// Subsequent daily runs do a full recount (idempotent); duration scales with
-// member count. If this ever times out we'll switch to an incremental sync.
+// Cron does: refresh membership flags → backfill visit counts (paid members
+// only) → birthday/anniversary/inactivity checks. First full run is ~4 min;
+// subsequent ones scale with the number of paid members (~200-250).
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,12 @@ export async function GET(req: NextRequest) {
 
   const supabase = createAdminClient()
   const summary = {
+    membershipSync: {
+      scanned: 0,
+      paid: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    },
     visitSync: {
       scanned: 0,
       updated: 0,
@@ -34,8 +41,15 @@ export async function GET(req: NextRequest) {
     errors: [] as string[],
   }
 
-  // Step 0: refresh per-member visit counts from MindBody so total_visit_count
-  // and last_visit_date are current before we evaluate any milestones below.
+  // Step 0a: refresh has_paid_membership for each active member.
+  try {
+    summary.membershipSync = await syncMemberMemberships()
+  } catch (err) {
+    summary.errors.push(`membership sync: ${(err as Error).message}`)
+  }
+
+  // Step 0b: refresh per-member visit counts (paid members only) so
+  // total_visit_count + last_visit_date are current.
   try {
     summary.visitSync = await syncMemberVisitCounts()
   } catch (err) {

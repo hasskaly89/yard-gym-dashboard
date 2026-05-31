@@ -87,12 +87,37 @@ export async function GET(req: Request) {
 
   const supabase = createAdminClient();
 
+  // Restrict to current paid members — no point leaderboarding a trial pass
+  // that happened to show up 10 times in one month.
+  const { data: paidRows, error: paidErr } = await supabase
+    .from('members')
+    .select('mindbody_client_id')
+    .eq('status', 'active')
+    .eq('has_paid_membership', true);
+
+  if (paidErr) {
+    return NextResponse.json({ error: paidErr.message }, { status: 500 });
+  }
+
+  const paidIds = (paidRows ?? []).map((r) => r.mindbody_client_id);
+  if (paidIds.length === 0) {
+    const body: LeaderboardResponse = {
+      month: bounds.monthKey,
+      label: bounds.label,
+      startUtc: startUtc.toISOString(),
+      endUtc: endUtc.toISOString(),
+      entries: [],
+    };
+    return NextResponse.json(body);
+  }
+
   // Pull visits within the month, then group + sort + take top 10 in JS.
   // Supabase doesn't support GROUP BY in JS-client queries directly, so an
   // RPC would be cleaner — but for ~few-thousand rows per month this is fast.
   const { data: rows, error } = await supabase
     .from('member_visits')
     .select('mindbody_client_id')
+    .in('mindbody_client_id', paidIds)
     .gte('visit_at', startUtc.toISOString())
     .lt('visit_at', endUtc.toISOString());
 

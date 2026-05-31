@@ -76,13 +76,18 @@ export async function syncMemberVisitCounts(): Promise<{
   const started = Date.now();
   const supabase = createAdminClient();
 
+  // Restrict the visit sync to paid current members — there's no point
+  // counting visits for trial passes or ex-members for milestones, and it
+  // cuts MindBody API load ~5x. Run syncMemberMemberships() first to keep
+  // has_paid_membership fresh.
   const { data: members, error } = await supabase
     .from('members')
     .select('mindbody_client_id')
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .eq('has_paid_membership', true);
 
   if (error || !members) {
-    throw new Error(`Failed to load active members: ${error?.message}`);
+    throw new Error(`Failed to load paid members: ${error?.message}`);
   }
 
   const token = await getMBToken();

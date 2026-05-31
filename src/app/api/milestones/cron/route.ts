@@ -56,17 +56,27 @@ export async function GET(req: NextRequest) {
     summary.errors.push(`visit sync: ${(err as Error).message}`)
   }
 
-  // Fetch all active members
-  const { data: members, error } = await supabase
-    .from('members')
-    .select('*')
-    .eq('status', 'active')
-
-  if (error || !members) {
-    return NextResponse.json(
-      { error: error?.message ?? 'No members found' },
-      { status: 500 }
-    )
+  // Fetch all active members. PostgREST caps select() at 1000 rows by default,
+  // so we paginate — without this ~500 members were missing from the legacy
+  // birthday/anniversary/inactivity scans.
+  const PAGE = 1000
+  const members: any[] = []
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('members')
+      .select('*')
+      .eq('status', 'active')
+      .order('mindbody_client_id')
+      .range(from, from + PAGE - 1)
+    if (error) {
+      return NextResponse.json(
+        { error: error.message ?? 'No members found' },
+        { status: 500 }
+      )
+    }
+    if (!data || data.length === 0) break
+    members.push(...data)
+    if (data.length < PAGE) break
   }
 
   for (const member of members) {

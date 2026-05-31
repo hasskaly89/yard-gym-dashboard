@@ -42,13 +42,23 @@ export async function syncMemberMemberships(): Promise<{
   // We only check members MindBody currently marks Active — anyone marked
   // inactive is automatically has_paid_membership = false (and a recent sync
   // run might have set them as such).
-  const { data: members, error } = await supabase
-    .from('members')
-    .select('mindbody_client_id')
-    .eq('status', 'active');
-
-  if (error || !members) {
-    throw new Error(`Failed to load members: ${error?.message}`);
+  //
+  // Supabase / PostgREST silently caps select() at 1000 rows by default, so
+  // we paginate explicitly with .range() — the members table has ~1.5k rows
+  // and without this Paul Barbara (and ~500 others) were getting dropped.
+  const PAGE = 1000;
+  const members: { mindbody_client_id: string }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from('members')
+      .select('mindbody_client_id')
+      .eq('status', 'active')
+      .order('mindbody_client_id')
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Failed to load members: ${error.message}`);
+    if (!data || data.length === 0) break;
+    members.push(...data);
+    if (data.length < PAGE) break;
   }
 
   const token = await getMBToken();

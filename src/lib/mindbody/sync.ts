@@ -24,12 +24,9 @@ export async function syncMindBodyMembers() {
         last_name: c.LastName || '',
         email: c.Email?.toLowerCase(),
         phone: c.MobilePhone || null,
-        photo_url: c.PhotoUrl || null,
-        active: c.Active ?? true,
         birth_date: c.BirthDate ? c.BirthDate.split('T')[0] : null,
         membership_start_date: c.CreationDate ? c.CreationDate.split('T')[0] : null,
         status: c.Active ? 'active' : 'inactive',
-        last_synced_at: new Date().toISOString(),
       }))
 
     const { error } = await supabase

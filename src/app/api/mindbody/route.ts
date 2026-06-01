@@ -28,6 +28,7 @@ type Counts = {
   intro: number;
   classPacks: number;
   declined: number;
+  suspended: number;
   attendance: { zero: number; low: number; mid: number; high: number };
   milestones: { at50: number; at100: number; at200: number; at500: number; at1000: number };
   // Per-range metrics (computed for week, month, ytd in one pass)
@@ -150,6 +151,7 @@ async function fetchCounts(): Promise<Counts> {
   const memberedClientIds: string[] = [];
   const allClientIds: string[] = [];
   let declined = 0;
+  let suspended = 0;
   let offset = 0;
 
   while (true) {
@@ -159,6 +161,7 @@ async function fetchCounts(): Promise<Counts> {
       allClientIds.push(c.Id);
       if (c.MembershipIcon > 0) memberedClientIds.push(c.Id);
       if (c.Status === 'Declined') declined++;
+      if (c.Status === 'Suspended') suspended++;
     }
     const total = data.PaginationResponse?.TotalResults || 0;
     offset += 200;
@@ -385,6 +388,7 @@ async function fetchCounts(): Promise<Counts> {
     intro,
     classPacks,
     declined,
+    suspended,
     attendance,
     milestones,
     ranged,
@@ -415,6 +419,7 @@ function emptyCounts(): Counts {
     intro: 0,
     classPacks: 0,
     declined: 0,
+    suspended: 0,
     attendance: { zero: 0, low: 0, mid: 0, high: 0 },
     milestones: { at50: 0, at100: 0, at200: 0, at500: 0, at1000: 0 },
     ranged: {

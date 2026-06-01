@@ -15,6 +15,7 @@ interface MBCounts {
   intro: number;
   classPacks: number;
   declined: number;
+  suspended: number;
   attendance: { zero: number; low: number; mid: number; high: number };
   milestones: { at50: number; at100: number; at200: number; at500: number; at1000: number };
   ranged: {
@@ -160,6 +161,7 @@ const EMPTY_COUNTS: MBCounts = {
   intro: 0,
   classPacks: 0,
   declined: 0,
+  suspended: 0,
   attendance: { zero: 0, low: 0, mid: 0, high: 0 },
   milestones: { at50: 0, at100: 0, at200: 0, at500: 0, at1000: 0 },
   ranged: {
@@ -230,7 +232,7 @@ export default function MindBodyPage() {
 
       {/* Section 1: Memberships (snapshot — current state) */}
       <SectionHeader title="Memberships" subtitle="Current membership status across the studio" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard
           label="Active Members"
           value={v(counts.active)}
@@ -257,6 +259,13 @@ export default function MindBodyPage() {
           value={v(counts.declined)}
           sub="Failed payment status"
           color="red"
+          href={MB_REPORTS.members}
+        />
+        <StatCard
+          label="Suspended Members"
+          value={v(counts.suspended)}
+          sub="On hold / suspended status"
+          color="orange"
           href={MB_REPORTS.members}
         />
       </div>

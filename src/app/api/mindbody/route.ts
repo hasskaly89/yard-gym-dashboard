@@ -7,8 +7,10 @@ const USERNAME = process.env.MINDBODY_USERNAME ?? '';
 const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
 
 // Membership IDs for each card
-// Active: Foundation T1 (11), TYG Membership (12), Foundation T2 (26), VIP (27), Black Friday Weekly (33)
-const ACTIVE_MEMBERSHIP_IDS = [11, 12, 26, 27, 33];
+// Active: Foundation T1 (11), TYG Membership (12), Influencer/Non-Fitness (24),
+// Foundation T2 (26), VIP (27), Black Friday Weekly (33)
+// Keep in sync with ACTIVE_MEMBERSHIP_IDS in src/lib/mindbody/active-memberships.ts
+const ACTIVE_MEMBERSHIP_IDS = [11, 12, 24, 26, 27, 33];
 const INTRO_MEMBERSHIP_IDS = [10];
 const CLASS_PACK_MEMBERSHIP_IDS = [13];
 

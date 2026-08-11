@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import TodayCalls, { type TodayCallsMember } from '@/components/retention/TodayCalls';
+import LogButton, { type LogOptions } from '@/components/retention/LogButton';
 import { logContact, snoozeMember } from './actions';
 import type {
   ContactInfo,
@@ -10,6 +12,7 @@ import type {
 } from '@/app/api/retention/contact-state/route';
 
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
+type RiskBand = 'healthy' | 'medium' | 'high';
 
 interface RetentionMember {
   id: string;
@@ -24,7 +27,19 @@ interface RetentionMember {
   prior7d: number;
   trend: number;
   ghlContactId: string | null;
+  healthScore: number;
+  riskBand: RiskBand;
+  reasons: string[];
+  daysSinceLastVisit: number | null;
+  aiSummary: string | null;
 }
+
+// Health-score chip styling by band. Low score = high risk (Recovr-style).
+const HEALTH_STYLE: Record<RiskBand, string> = {
+  healthy: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  medium: 'bg-amber-50 text-amber-700 border-amber-200',
+  high: 'bg-rose-50 text-rose-700 border-rose-200',
+};
 
 function daysSinceIso(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -135,7 +150,7 @@ function MemberCard({
   snooze: SnoozeInfo | undefined;
   pending: boolean;
   onCopy: (m: RetentionMember) => void;
-  onLog: (m: TodayCallsMember) => void;
+  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
   onSnooze: (m: TodayCallsMember) => void;
 }) {
   // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
@@ -165,6 +180,12 @@ function MemberCard({
           {member.firstName} {member.lastName}
         </a>
         <div className="flex items-center gap-1 shrink-0">
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${HEALTH_STYLE[member.riskBand]}`}
+            title={`Health score ${member.healthScore}/100 · ${member.riskBand} risk${member.reasons[0] ? ` · ${member.reasons[0]}` : ''}`}
+          >
+            {member.healthScore}
+          </span>
           {showGhl && (
             <a
               href={ghlContactDetailUrl(
@@ -211,6 +232,11 @@ function MemberCard({
           style={{ width: `${Math.max(barPct, 2)}%` }}
         />
       </div>
+      {(member.aiSummary || member.reasons[0]) && (
+        <p className="text-[11px] text-gray-600 mt-2 leading-snug">
+          {member.aiSummary ?? member.reasons[0]}
+        </p>
+      )}
       {(isSnoozed || contactDays !== null) && (
         <p className="text-[10px] text-gray-500 mt-1.5">
           {isSnoozed
@@ -218,18 +244,8 @@ function MemberCard({
             : `Last contact: ${contactDays}d ago by ${contact!.contactedByName}`}
         </p>
       )}
-      <div className="flex items-center gap-1 mt-2">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={(e) => {
-            e.preventDefault();
-            onLog(member);
-          }}
-          className="text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition"
-        >
-          Logged ✓
-        </button>
+      <div className="flex flex-wrap items-start gap-1 mt-2">
+        <LogButton member={member} pending={pending} onLog={onLog} />
         <button
           type="button"
           disabled={pending}
@@ -304,13 +320,15 @@ export default function RetentionPage() {
   }, []);
 
   const handleLog = useCallback(
-    async (m: TodayCallsMember) => {
+    async (m: TodayCallsMember, opts?: LogOptions) => {
       markPending(m.id, true);
       try {
         const result = await logContact({
           memberId: m.id,
           memberName: `${m.firstName} ${m.lastName}`.trim(),
           band: m.trendCategory,
+          channel: opts?.channel,
+          outcome: opts?.outcome,
         });
         if (!result.ok) {
           setError(result.error);
@@ -432,6 +450,12 @@ export default function RetentionPage() {
         >
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
+        <Link
+          href="/retention/logs"
+          className="px-4 py-2.5 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gym-accent hover:bg-gray-50 hover:border-gray-300 transition whitespace-nowrap text-center"
+        >
+          View Logs →
+        </Link>
       </div>
 
       {!loading && members.length > 0 && (

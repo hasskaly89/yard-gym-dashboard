@@ -1,21 +1,19 @@
 import { NextResponse } from 'next/server';
-import { findGHLContactByEmail, findGHLContactByPhone } from '@/lib/ghl/api';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { tallyVisitWindows } from '@/lib/retention/windows';
+import { computeHealthScore, type RiskBand } from '@/lib/retention/healthScore';
 
-const MB_BASE = 'https://api.mindbodyonline.com/public/v6';
-const SITE_ID = process.env.MINDBODY_SITE_ID ?? '-99';
-const API_KEY = process.env.MINDBODY_API_KEY ?? '';
-const USERNAME = process.env.MINDBODY_USERNAME ?? '';
-const PASSWORD = process.env.MINDBODY_PASSWORD ?? '';
+// IMPORTANT — cost note (see memory: project_mindbody_api_billing):
+// MindBody bills $0.002 PER API CALL. This endpoint used to recompute the
+// retention board live from MindBody on every page load (~1,500–2,000 calls
+// each), which was the single biggest driver of a 203k-call / $406 month.
+//
+// It now reads entirely from Supabase: the nightly cron (/api/milestones/cron)
+// syncs `members` + `member_visits` and persists health_score / risk_band /
+// ai_summary. Computing the board from those tables costs ZERO MindBody calls.
 
-// Paid membership tiers — keep in sync with src/lib/mindbody/active-memberships.ts
-// 11 Foundation T1 · 12 TYG Membership · 24 Influencer (Non-Fitness)
-// 26 Foundation T2 (legacy) · 27 VIP · 33 Black Friday Weekly
-const ACTIVE_MEMBERSHIP_IDS = [11, 12, 24, 26, 27, 33];
+export const dynamic = 'force-dynamic';
 
-// GHL portal URL + location id — both shipped to the client so the Retention
-// page can build "open contact in GHL" links per member. Not sensitive; they
-// appear in URLs. The portal URL is the GHL whitelabel domain for this studio;
-// change here (or override with GHL_PORTAL_URL env var) if it ever moves.
 const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
 const GHL_PORTAL_URL =
   process.env.GHL_PORTAL_URL ?? 'https://crm.theyardgym.com.au';
@@ -33,88 +31,24 @@ type RetentionMember = {
   prior30d: number;
   last7d: number;
   prior7d: number;
-  // last 30d / prior 30d, capped at 2.0 (200% growth). 1.0 = same as last month.
   trend: number;
-  // Resolved GHL contact id, when we could find one by the member's email.
-  // null when the member has no email or no matching GHL contact yet.
   ghlContactId: string | null;
+  // Health layer (Recovr parity)
+  healthScore: number;
+  riskBand: RiskBand;
+  reasons: string[];
+  daysSinceLastVisit: number | null;
+  aiSummary: string | null;
 };
 
-// --- Cache ---
-const CACHE_TTL = 5 * 60 * 1000;
-let cachedData: { members: RetentionMember[]; updatedAt: string } | null = null;
-let cacheTimestamp = 0;
-let refreshInProgress = false;
-
-// --- Helpers ---
-function parseDateMs(d: string | null | undefined): number | null {
-  if (!d) return null;
-  const ts = new Date(d).getTime();
-  return isNaN(ts) ? null : ts;
-}
-
-async function getStaffToken(): Promise<string> {
-  const res = await fetch(`${MB_BASE}/usertoken/issue`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'API-Key': API_KEY,
-      'SiteId': SITE_ID,
-    },
-    body: JSON.stringify({ Username: USERNAME, Password: PASSWORD }),
-  });
-  if (!res.ok) throw new Error(`Token error: ${await res.text()}`);
-  const data = await res.json();
-  return data.AccessToken;
-}
-
-async function mbFetch(path: string, token: string) {
-  const res = await fetch(`${MB_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'API-Key': API_KEY,
-      'SiteId': SITE_ID,
-      'Authorization': `Bearer ${token}`,
-    },
-  });
-  if (!res.ok) throw new Error(`MindBody API error on ${path}: ${res.status}`);
-  return res.json();
-}
-
-type RawClient = {
-  Id: string;
-  FirstName?: string;
-  LastName?: string;
-  Email?: string;
-  MobilePhone?: string;
-  MembershipIcon?: number;
-};
-
-type ClientMembership = {
-  MembershipId: number;
-  Current: boolean;
-};
-
-type Visit = {
-  SignedIn?: boolean;
-  Name?: string | null;
-  StartDateTime?: string;
-};
-
-// Trend-based classification. Compares last 30d to prior 30d (days 30-60 ago)
-// so the signal is *change*, not absolute volume — that's how we catch the
-// 6-12 week slide before someone becomes a zero-visit non-attender.
+// Trend-based classification — unchanged thresholds so the board looks the same.
 function classify(last30: number, prior30: number): TrendCategory {
   if (last30 === 0) return 'STOPPED';
-
-  // Brand-new member with no prior-month baseline — judge on absolute attendance.
-  // ~2 visits/wk is roughly the floor for "engaged."
   if (prior30 < 2) {
     if (last30 >= 8) return 'STABLE';
     if (last30 >= 4) return 'SLOWING';
     return 'SLIDING';
   }
-
   const trend = last30 / prior30;
   if (trend >= 0.85) return 'STABLE';
   if (trend >= 0.55) return 'SLOWING';
@@ -122,244 +56,128 @@ function classify(last30: number, prior30: number): TrendCategory {
   return 'STOPPED';
 }
 
-async function fetchRetention(): Promise<RetentionMember[]> {
-  const token = await getStaffToken();
-  const nowMs = Date.now();
-  const last7Start = nowMs - 7 * 86400000;
-  const last14Start = nowMs - 14 * 86400000;
-  const last30Start = nowMs - 30 * 86400000;
-  const last60Start = nowMs - 60 * 86400000;
+type PaidMemberRow = {
+  mindbody_client_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  ghl_contact_id: string | null;
+  last_visit_date: string | null;
+  total_visit_count: number | null;
+};
 
-  // Fetch only ~75 days of visits per member — enough headroom for prior-30d
-  // comparison plus a few days of buffer. Much faster than scanning lifetime.
-  const visitWindowStartStr = new Date(nowMs - 75 * 86400000)
-    .toISOString()
-    .split('T')[0];
-
-  // Step 1: paginate all clients, keep those with a membership icon
-  const memberedClients: RawClient[] = [];
-  let offset = 0;
-  while (true) {
-    const data = await mbFetch(`/client/clients?limit=200&offset=${offset}`, token);
-    const clients: RawClient[] = data.Clients || [];
-    for (const c of clients) {
-      if ((c.MembershipIcon ?? 0) > 0) memberedClients.push(c);
-    }
-    const total = data.PaginationResponse?.TotalResults || 0;
-    offset += 200;
-    if (offset >= total) break;
-  }
-
-  // Step 2: filter to clients on an active-tier membership
-  const BATCH_SIZE = 30;
-  const activeClients: RawClient[] = [];
-
-  for (let i = 0; i < memberedClients.length; i += BATCH_SIZE) {
-    const batch = memberedClients.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (c) => {
-        const memRes = await mbFetch(
-          `/client/activeclientmemberships?ClientId=${c.Id}`,
-          token,
-        );
-        const memberships: ClientMembership[] = memRes.ClientMemberships || [];
-        const hasActive = memberships.some(
-          (m) => m.Current && ACTIVE_MEMBERSHIP_IDS.includes(m.MembershipId),
-        );
-        return { client: c, hasActive };
-      }),
-    );
-
-    for (const r of results) {
-      if (r.status !== 'fulfilled') continue;
-      if (r.value.hasActive) activeClients.push(r.value.client);
-    }
-  }
-
-  // Step 3: for each active member, pull last 75d of visits and compute trend
-  async function fetchVisits(clientId: string): Promise<Visit[]> {
-    const visits: Visit[] = [];
-    let vOffset = 0;
-    const PAGE = 200;
-    while (true) {
-      const data = await mbFetch(
-        `/client/clientvisits?ClientId=${clientId}&StartDate=${visitWindowStartStr}&limit=${PAGE}&offset=${vOffset}`,
-        token,
-      );
-      const page: Visit[] = data.Visits || [];
-      visits.push(...page);
-      const total = data.PaginationResponse?.TotalResults ?? 0;
-      vOffset += PAGE;
-      if (vOffset >= total || page.length === 0) break;
-    }
-    return visits;
-  }
-
-  const members: RetentionMember[] = [];
-
-  for (let i = 0; i < activeClients.length; i += BATCH_SIZE) {
-    const batch = activeClients.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map(async (client) => {
-        const visits = await fetchVisits(client.Id);
-        const filtered = visits.filter((v) => {
-          if (v.SignedIn !== true) return false;
-          const name = (v.Name || '').toLowerCase();
-          if (name.includes('creche')) return false;
-          return true;
-        });
-
-        let last7 = 0;
-        let prior7 = 0;
-        let last30 = 0;
-        let prior30 = 0;
-        for (const v of filtered) {
-          const ts = parseDateMs(v.StartDateTime);
-          if (ts === null) continue;
-          if (ts >= last7Start) last7++;
-          else if (ts >= last14Start) prior7++;
-          if (ts >= last30Start) last30++;
-          else if (ts >= last60Start) prior30++;
-        }
-
-        const trendCategory = classify(last30, prior30);
-        const trend =
-          prior30 > 0
-            ? Math.min(last30 / prior30, 2)
-            : last30 > 0
-              ? 1
-              : 0;
-
-        const member: RetentionMember = {
-          id: client.Id,
-          firstName: client.FirstName ?? '',
-          lastName: client.LastName ?? '',
-          email: client.Email ?? '',
-          mobilePhone: client.MobilePhone ?? '',
-          trendCategory,
-          last30d: last30,
-          prior30d: prior30,
-          last7d: last7,
-          prior7d: prior7,
-          trend: Math.round(trend * 100) / 100,
-          ghlContactId: null,
-        };
-        return member;
-      }),
-    );
-
-    for (const r of results) {
-      if (r.status === 'fulfilled') members.push(r.value);
-    }
-  }
-
-  // Step 4: enrich with GHL contact ids — email first, then phone as a
-  // fallback (lots of members have a different email in GHL vs MindBody but
-  // phone is consistent). GHL v2 rate-limits aggressively so we keep
-  // concurrency low (3) and pause briefly between batches; the v2Fetch helper
-  // also retries 429s. Failures are silent — no match just means no chip.
-  const GHL_BATCH = 3;
-  const GHL_BATCH_DELAY_MS = 350;
-  for (let i = 0; i < members.length; i += GHL_BATCH) {
-    const slice = members.slice(i, i + GHL_BATCH);
-    await Promise.allSettled(
-      slice.map(async (m) => {
-        if (m.email) {
-          const id = await findGHLContactByEmail(m.email);
-          if (id) {
-            m.ghlContactId = id;
-            return;
-          }
-        }
-        if (m.mobilePhone) {
-          const id = await findGHLContactByPhone(m.mobilePhone);
-          if (id) m.ghlContactId = id;
-        }
-      }),
-    );
-    if (i + GHL_BATCH < members.length) {
-      await new Promise((r) => setTimeout(r, GHL_BATCH_DELAY_MS));
-    }
-  }
-
-  return members;
+function daysSince(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
 }
 
-function triggerBackgroundRefresh() {
-  if (refreshInProgress) return;
-  refreshInProgress = true;
-
-  fetchRetention()
-    .then((members) => {
-      cachedData = { members, updatedAt: new Date().toISOString() };
-      cacheTimestamp = Date.now();
-    })
-    .catch((err) => console.error('Retention background refresh failed:', err))
-    .finally(() => {
-      refreshInProgress = false;
-    });
+// Reads persisted AI summaries. Wrapped so the board still works BEFORE the
+// 007_health_scores migration adds the column (returns an empty map instead of
+// erroring).
+async function fetchSummaries(
+  supabase: ReturnType<typeof createAdminClient>,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  try {
+    const { data, error } = await supabase
+      .from('members')
+      .select('mindbody_client_id, ai_summary')
+      .not('ai_summary', 'is', null)
+      .returns<{ mindbody_client_id: string; ai_summary: string | null }[]>();
+    if (error || !data) return map;
+    for (const r of data) if (r.ai_summary) map.set(r.mindbody_client_id, r.ai_summary);
+  } catch {
+    // column not present yet — fine.
+  }
+  return map;
 }
 
-export async function GET(request: Request) {
-  if (!API_KEY) {
+export async function GET() {
+  const supabase = createAdminClient();
+
+  const { data: paidRows, error: paidErr } = await supabase
+    .from('members')
+    .select(
+      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count',
+    )
+    .eq('status', 'active')
+    .eq('has_paid_membership', true)
+    .returns<PaidMemberRow[]>();
+
+  if (paidErr) {
+    return NextResponse.json({ error: paidErr.message }, { status: 500 });
+  }
+
+  const paid = paidRows ?? [];
+  if (paid.length === 0) {
     return NextResponse.json({
-      mock: true,
+      mock: false,
       members: [],
       ghlLocationId: GHL_LOCATION_ID,
       ghlPortalUrl: GHL_PORTAL_URL,
+      updatedAt: new Date().toISOString(),
     });
   }
 
-  const url = new URL(request.url);
-  if (url.searchParams.get('refresh') === 'true') {
-    cachedData = null;
-    cacheTimestamp = 0;
-  }
+  const paidIds = paid.map((m) => m.mindbody_client_id);
+  const windows = await tallyVisitWindows(supabase, paidIds);
+  const summaries = await fetchSummaries(supabase);
 
-  const now = Date.now();
-  const cacheAge = now - cacheTimestamp;
-  const isFresh = cachedData && cacheAge < CACHE_TTL;
-
-  if (isFresh) {
-    return NextResponse.json({
-      mock: false,
-      cached: true,
-      ghlLocationId: GHL_LOCATION_ID,
-      ghlPortalUrl: GHL_PORTAL_URL,
-      ...cachedData,
+  const members: RetentionMember[] = paid.map((m) => {
+    const c = windows.get(m.mindbody_client_id) ?? {
+      last7: 0,
+      prior7: 0,
+      last30: 0,
+      prior30: 0,
+    };
+    const trend =
+      c.prior30 > 0 ? Math.min(c.last30 / c.prior30, 2) : c.last30 > 0 ? 1 : 0;
+    const dslv = daysSince(m.last_visit_date);
+    const health = computeHealthScore({
+      last7: c.last7,
+      prior7: c.prior7,
+      last30: c.last30,
+      prior30: c.prior30,
+      daysSinceLastVisit: dslv,
+      totalVisitCount: m.total_visit_count ?? 0,
     });
-  }
+    return {
+      id: m.mindbody_client_id,
+      firstName: m.first_name ?? '',
+      lastName: m.last_name ?? '',
+      email: m.email ?? '',
+      mobilePhone: m.phone ?? '',
+      trendCategory: classify(c.last30, c.prior30),
+      last30d: c.last30,
+      prior30d: c.prior30,
+      last7d: c.last7,
+      prior7d: c.prior7,
+      trend: Math.round(trend * 100) / 100,
+      ghlContactId: m.ghl_contact_id ?? null,
+      healthScore: health.score,
+      riskBand: health.band,
+      reasons: health.reasons,
+      daysSinceLastVisit: dslv,
+      aiSummary: summaries.get(m.mindbody_client_id) ?? null,
+    };
+  });
 
-  // Stale cache: serve immediately, refresh in background
-  if (cachedData) {
-    triggerBackgroundRefresh();
-    return NextResponse.json({
-      mock: false,
-      cached: true,
-      refreshing: true,
-      ghlLocationId: GHL_LOCATION_ID,
-      ghlPortalUrl: GHL_PORTAL_URL,
-      ...cachedData,
-    });
-  }
+  const { data: lastSync } = await supabase
+    .from('member_visits')
+    .select('created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  // No cache: must wait for first fetch
-  try {
-    const members = await fetchRetention();
-    cachedData = { members, updatedAt: new Date().toISOString() };
-    cacheTimestamp = Date.now();
-    return NextResponse.json({
-      mock: false,
-      cached: false,
-      ghlLocationId: GHL_LOCATION_ID,
-      ghlPortalUrl: GHL_PORTAL_URL,
-      ...cachedData,
-    });
-  } catch (error) {
-    console.error('Retention API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch retention data' },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json({
+    mock: false,
+    cached: true,
+    members,
+    ghlLocationId: GHL_LOCATION_ID,
+    ghlPortalUrl: GHL_PORTAL_URL,
+    updatedAt: lastSync?.created_at ?? new Date().toISOString(),
+  });
 }

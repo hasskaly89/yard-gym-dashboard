@@ -4,10 +4,17 @@ import { checkBirthday, checkAnniversary, checkInactivity } from '@/lib/mileston
 import { triggerMilestone } from '@/lib/milestones/trigger'
 import { syncMemberMemberships } from '@/lib/mindbody/active-memberships'
 import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
+import { isDue, markRun } from '@/lib/mindbody/sync-state'
+import { runRetentionScoring } from '@/lib/retention/run-scoring'
 
-// Cron does: refresh membership flags → backfill visit counts (paid members
-// only) → birthday/anniversary/inactivity checks. First full run is ~4 min;
-// subsequent ones scale with the number of paid members (~200-250).
+// Cron does: (weekly) refresh membership flags → (nightly) incremental visit
+// sync (paid members only) → birthday/anniversary/inactivity checks.
+//
+// COST: MindBody bills $0.002/call. Memberships are one call/active member, so
+// they run at most weekly (MEMBERSHIP_MAX_AGE_DAYS). Visits run nightly but in
+// 'incremental' mode — only new visits since each member's last known one — so
+// the nightly bill stays small and does not grow with history.
+const MEMBERSHIP_MAX_AGE_DAYS = 6
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
@@ -24,36 +31,71 @@ export async function GET(req: NextRequest) {
   const supabase = createAdminClient()
   const summary = {
     membershipSync: {
+      ran: false,
+      skippedReason: null as string | null,
       scanned: 0,
       paid: 0,
+      apiCalls: 0,
       errors: [] as string[],
       durationMs: 0,
     },
     visitSync: {
       scanned: 0,
       updated: 0,
+      apiCalls: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    },
+    scoring: {
+      scored: 0,
+      high: 0,
+      medium: 0,
+      healthy: 0,
+      scoresUpdated: 0,
+      summariesWritten: 0,
       errors: [] as string[],
       durationMs: 0,
     },
     birthdays: 0,
     anniversaries: 0,
     inactivity: { 7: 0, 14: 0, 21: 0, 30: 0 } as Record<number, number>,
+    apiCalls: 0,
+    estimatedCostUsd: 0,
     errors: [] as string[],
   }
 
-  // Step 0a: refresh has_paid_membership for each active member.
+  // Step 0a: refresh has_paid_membership — expensive (one call/active member),
+  // so only weekly. Visit sync below still runs nightly.
   try {
-    summary.membershipSync = await syncMemberMemberships()
+    if (await isDue('membership_sync', MEMBERSHIP_MAX_AGE_DAYS)) {
+      summary.membershipSync = { ...summary.membershipSync, ...(await syncMemberMemberships()), ran: true }
+      await markRun('membership_sync')
+    } else {
+      summary.membershipSync.skippedReason = `ran within last ${MEMBERSHIP_MAX_AGE_DAYS}d`
+    }
   } catch (err) {
     summary.errors.push(`membership sync: ${(err as Error).message}`)
   }
 
-  // Step 0b: refresh per-member visit counts (paid members only) so
-  // total_visit_count + last_visit_date are current.
+  // Step 0b: incremental visit sync (paid members only) so total_visit_count +
+  // last_visit_date are current — pulls only new visits since last known one.
   try {
-    summary.visitSync = await syncMemberVisitCounts()
+    summary.visitSync = await syncMemberVisitCounts({ mode: 'incremental' })
+    await markRun('visit_sync')
   } catch (err) {
     summary.errors.push(`visit sync: ${(err as Error).message}`)
+  }
+
+  summary.apiCalls = summary.membershipSync.apiCalls + summary.visitSync.apiCalls
+  summary.estimatedCostUsd = Math.round(summary.apiCalls * 0.002 * 100) / 100
+
+  // Step 0c: recompute health scores + AI summaries from the fresh visit data.
+  // Reads Supabase only (zero MindBody cost); AI summaries run only if a key is
+  // configured, and only for at-risk members.
+  try {
+    summary.scoring = await runRetentionScoring()
+  } catch (err) {
+    summary.errors.push(`scoring: ${(err as Error).message}`)
   }
 
   // Fetch all active members. PostgREST caps select() at 1000 rows by default,

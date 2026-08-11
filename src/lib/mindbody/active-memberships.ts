@@ -30,9 +30,13 @@ async function memberHasPaidMembership(
   );
 }
 
-export async function syncMemberMemberships(): Promise<{
+export async function syncMemberMemberships(opts?: {
+  // Cap the number of members checked — used for bounded, low-cost test runs.
+  limit?: number;
+}): Promise<{
   scanned: number;
   paid: number;
+  apiCalls: number;
   errors: string[];
   durationMs: number;
 }> {
@@ -59,8 +63,12 @@ export async function syncMemberMemberships(): Promise<{
     if (!data || data.length === 0) break;
     members.push(...data);
     if (data.length < PAGE) break;
+    if (opts?.limit && members.length >= opts.limit) break;
   }
+  if (opts?.limit) members.splice(opts.limit);
 
+  const { resetMBCallCount, getMBCallCount } = await import('./api');
+  resetMBCallCount();
   const token = await getMBToken();
   const errors: string[] = [];
   let paid = 0;
@@ -97,14 +105,18 @@ export async function syncMemberMemberships(): Promise<{
 
   // Anyone NOT in the active list (i.e. status != 'active') should also have
   // has_paid_membership = false. Set this unconditionally as a safety net.
-  await supabase
-    .from('members')
-    .update({ has_paid_membership: false })
-    .neq('status', 'active');
+  // Skipped in bounded test runs so a `limit` run stays side-effect-light.
+  if (!opts?.limit) {
+    await supabase
+      .from('members')
+      .update({ has_paid_membership: false })
+      .neq('status', 'active');
+  }
 
   return {
     scanned: members.length,
     paid,
+    apiCalls: getMBCallCount(),
     errors,
     durationMs: Date.now() - started,
   };

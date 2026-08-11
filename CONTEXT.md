@@ -45,8 +45,8 @@ src/
 
 ### 1. MindBody (Members, Classes, Attendance)
 - **Site ID:** 5741283
-- **API Key:** `dbcac5c89f1c4ba6b9d476247cbad135`
-- **Status:** API key created & active. Activation link has been generated — needs to be clicked/confirmed by studio owner to authorize the key for site 5741283. Once activated, use the `/public/v6` REST API with `SiteId` and `API-Key` headers.
+- **API Key:** stored in `MINDBODY_API_KEY` env var (never commit the key). Managed at developers.mindbodyonline.com → Account → API Credentials (app `theyardgymedensorpark-1`).
+- **Status:** Key must be **Active** in the developer portal and authorised for site 5741283. If requests return `403 DeniedAccess`, the key has been Deactivated — reactivate it there. Uses the `/public/v6` REST API with `SiteId` and `API-Key` headers.
 - **Auth flow:** POST to `/usertoken/issue` with owner credentials to get a bearer token, then use that token for subsequent requests.
 - **Useful endpoints:** `/client/clients` (members), `/class/classes` (schedule), `/sale/sales` (revenue), `/enrollment/enrollments`
 

@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { priorityScore, type Band } from '@/lib/retention/priority';
+import LogButton, { type LogOptions } from './LogButton';
 import type {
   ContactInfo,
   SnoozeInfo,
@@ -67,7 +68,7 @@ export default function TodayCalls({
   refreshedAt?: string;
   totalAtRisk: number;
   onCopy: (m: TodayCallsMember) => void;
-  onLog: (m: TodayCallsMember) => void;
+  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
   onSnooze: (m: TodayCallsMember) => void;
 }) {
   const top = useMemo(() => {
@@ -204,14 +205,7 @@ export default function TodayCalls({
                       {copied ? 'Copied' : 'Copy'}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => onLog(m)}
-                    className="text-[10px] font-medium tracking-wide uppercase px-2 py-1 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition"
-                  >
-                    Logged ✓
-                  </button>
+                  <LogButton member={m} pending={pending} onLog={onLog} />
                   <button
                     type="button"
                     disabled={pending}

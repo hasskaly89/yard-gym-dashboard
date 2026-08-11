@@ -89,6 +89,60 @@ export async function snoozeMember(input: {
   return { ok: true, data: { snoozedUntil: data.snoozed_until } };
 }
 
+export async function addNote(input: {
+  memberId: string;
+  memberName: string;
+  note: string;
+}): Promise<ActionResult<{ id: string }>> {
+  const { supabase, user, error } = await requireUser();
+  if (!supabase || !user) return { ok: false, error: error ?? 'No user' };
+
+  const note = input.note.trim();
+  if (!note) return { ok: false, error: 'Note is empty' };
+  if (note.length > 2000) {
+    return { ok: false, error: 'Note is too long (2000 char max)' };
+  }
+
+  const byName = displayNameForEmail(user.email);
+
+  const { data, error: insertErr } = await supabase
+    .from('member_notes')
+    .insert({
+      member_id: input.memberId,
+      member_name: input.memberName,
+      note,
+      author_id: user.id,
+      author_name: byName,
+    })
+    .select('id')
+    .single();
+
+  if (insertErr || !data) {
+    return { ok: false, error: insertErr?.message ?? 'Insert failed' };
+  }
+
+  revalidatePath('/retention/logs');
+  return { ok: true, data: { id: data.id } };
+}
+
+export async function deleteNote(input: {
+  noteId: string;
+}): Promise<ActionResult> {
+  const { supabase, user, error } = await requireUser();
+  if (!supabase || !user) return { ok: false, error: error ?? 'No user' };
+
+  // RLS enforces "own note + within 10 minutes" — we just attempt the delete.
+  const { error: delErr } = await supabase
+    .from('member_notes')
+    .delete()
+    .eq('id', input.noteId);
+
+  if (delErr) return { ok: false, error: delErr.message };
+
+  revalidatePath('/retention/logs');
+  return { ok: true, data: undefined };
+}
+
 export async function undoLastContact(input: {
   memberId: string;
 }): Promise<ActionResult> {

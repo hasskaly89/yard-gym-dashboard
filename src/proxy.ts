@@ -38,11 +38,27 @@ export async function proxy(request: NextRequest) {
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean)
   const userEmail = user?.email?.toLowerCase() ?? ''
-  const isAllowed =
+  const inAdminEmails =
     userEmail !== '' &&
     allowedPatterns.some((p) =>
       p.startsWith('*@') ? userEmail.endsWith(p.slice(1)) : p === userEmail,
     )
+
+  // Load the user's profile once — used for BOTH the allowlist (a profile row
+  // means an admin added them via Team Access) and per-page permissions below.
+  const prof = user
+    ? (
+        await supabase
+          .from('profiles')
+          .select('role, allowed_pages')
+          .eq('id', user.id)
+          .maybeSingle()
+      ).data
+    : null
+
+  // Allowed to log in if in the ADMIN_EMAILS env allowlist OR an admin has
+  // added them (they have a profile row). This lets admins add staff in-app.
+  const isAllowed = userEmail !== '' && (inAdminEmails || !!prof)
 
   // Not logged in → bounce to /login
   if (!user && !isPublic) {
@@ -67,11 +83,6 @@ export async function proxy(request: NextRequest) {
 
   // Per-page access control (admin sees all; staff only their allowed pages).
   if (user && isAllowed && !isPublic) {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, allowed_pages')
-      .eq('id', user.id)
-      .maybeSingle()
     const access = computeAccess({
       email: userEmail,
       profileRole: prof?.role,

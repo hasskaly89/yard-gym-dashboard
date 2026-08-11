@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { updateUserAccess } from './actions';
+import { useRouter } from 'next/navigation';
+import { updateUserAccess, addStaff } from './actions';
 import { ALWAYS_ALLOWED, type PageKey, type Role } from '@/lib/access';
 import type { AdminUserRow } from './page';
 
@@ -26,11 +27,125 @@ export default function AdminClient({
         </p>
       </div>
 
+      <AddStaffCard pages={pages} />
+
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400 mb-3">
+        Team members
+      </h2>
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {users.map((u) => (
           <UserCard key={u.id} user={u} pages={pages} isMe={u.email === meEmail} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function AddStaffCard({ pages }: { pages: PageDef[] }) {
+  const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [allowed, setAllowed] = useState<Set<PageKey>>(new Set(ALWAYS_ALLOWED));
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<
+    | { kind: 'ok'; email: string; tempPassword: string | null; existed: boolean }
+    | { kind: 'error'; msg: string }
+    | null
+  >(null);
+
+  function toggle(key: PageKey) {
+    if (ALWAYS_ALLOWED.includes(key)) return;
+    setAllowed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function submit() {
+    if (!email.trim()) return;
+    setBusy(true);
+    setResult(null);
+    const res = await addStaff({ email, allowedPages: Array.from(allowed) });
+    setBusy(false);
+    if (res.ok) {
+      setResult({ kind: 'ok', email: res.email, tempPassword: res.tempPassword, existed: res.existed });
+      setEmail('');
+      setAllowed(new Set(ALWAYS_ALLOWED));
+      router.refresh();
+    } else {
+      setResult({ kind: 'error', msg: res.error });
+    }
+  }
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-8">
+      <h2 className="text-sm font-bold text-gray-900 mb-1">Add a staff member</h2>
+      <p className="text-xs text-gray-500 mb-3">
+        Creates their login and grants the pages you tick. Share the temporary
+        password with them — they can change it after signing in.
+      </p>
+
+      <div className="flex flex-col sm:flex-row gap-2 mb-3">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="name@example.com"
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white focus:border-gray-400"
+        />
+        <button
+          type="button"
+          onClick={submit}
+          disabled={busy || !email.trim()}
+          className="text-sm font-medium px-4 py-2 rounded-lg bg-gym-accent text-white hover:opacity-90 disabled:opacity-50 transition whitespace-nowrap"
+        >
+          {busy ? 'Adding…' : 'Add staff'}
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {pages.map((p) => {
+          const on = allowed.has(p.key) || ALWAYS_ALLOWED.includes(p.key);
+          const fixed = ALWAYS_ALLOWED.includes(p.key);
+          return (
+            <button
+              key={p.key}
+              type="button"
+              disabled={fixed}
+              onClick={() => toggle(p.key)}
+              className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                on
+                  ? 'bg-gym-accent/10 border-gym-accent text-gym-accent'
+                  : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+              } ${fixed ? 'opacity-60 cursor-default' : ''}`}
+            >
+              {on ? '✓ ' : ''}
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {result?.kind === 'ok' && (
+        <div className="mt-3 bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm">
+          {result.existed ? (
+            <p className="text-emerald-800">
+              <span className="font-semibold">{result.email}</span> already had an
+              account — access granted. They can sign in with their existing password.
+            </p>
+          ) : (
+            <p className="text-emerald-800">
+              Added <span className="font-semibold">{result.email}</span>. Temporary
+              password: <span className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-emerald-200">{result.tempPassword}</span>{' '}
+              — share it with them; they can change it after signing in.
+            </p>
+          )}
+        </div>
+      )}
+      {result?.kind === 'error' && (
+        <p className="mt-3 text-sm text-rose-600">{result.msg}</p>
+      )}
     </div>
   );
 }

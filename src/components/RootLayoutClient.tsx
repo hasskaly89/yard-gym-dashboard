@@ -2,8 +2,17 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Sidebar from './Sidebar'
+import type { PageKey, Role } from '@/lib/access'
 
-export default function RootLayoutClient({ children }: { children: React.ReactNode }) {
+export type NavAccess = { role: Role; allowedPages: PageKey[]; email: string } | null
+
+export default function RootLayoutClient({
+  children,
+  access,
+}: {
+  children: React.ReactNode
+  access: NavAccess
+}) {
   const pathname = usePathname()
   const [mobileOpen, setMobileOpen] = useState(false)
   const isFullScreen = pathname.startsWith('/login') || pathname.startsWith('/auth')
@@ -19,7 +28,11 @@ export default function RootLayoutClient({ children }: { children: React.ReactNo
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+      <Sidebar
+        mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
+        access={access}
+      />
       <main className="flex-1 overflow-auto min-w-0">
         {/* Mobile top bar with hamburger */}
         <div className="md:hidden sticky top-0 z-30 bg-white border-b border-gym-border px-4 py-3 flex items-center gap-3">

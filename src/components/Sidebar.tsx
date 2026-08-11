@@ -1,28 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-
-const navItems = [
-  { label: "Dashboard", href: "/", icon: "⊞" },
-  { label: "MindBody", href: "/mindbody", icon: "◈" },
-  { label: "Retention", href: "/retention", icon: "♥" },
-  { label: "Retention Logs", href: "/retention/logs", icon: "▤" },
-  { label: "Xero", href: "/xero", icon: "₿" },
-  { label: "Meta Ads", href: "/meta-ads", icon: "◉" },
-  { label: "GoHighLevel", href: "/gohighlevel", icon: "▲" },
-  { label: "Milestones", href: "/milestones", icon: "🏆" },
-  { label: "Timesheets", href: "/timesheets", icon: "◷" },
-];
+import { usePathname, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { PAGES } from "@/lib/access";
+import type { NavAccess } from "./RootLayoutClient";
 
 export default function Sidebar({
   mobileOpen = false,
   onMobileClose,
+  access,
 }: {
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  access: NavAccess;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  // Only show pages this user is allowed to see (admins see all).
+  const allowed = new Set(access?.allowedPages ?? []);
+  const navItems =
+    access?.role === "admin"
+      ? PAGES
+      : PAGES.filter((p) => allowed.has(p.key));
+
+  async function handleLogout() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
 
   return (
     <>
@@ -70,7 +77,7 @@ export default function Sidebar({
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 px-3 py-4">
+        <nav className="flex-1 px-3 py-4 overflow-y-auto">
           <p className="text-gym-muted text-xs font-semibold tracking-widest uppercase px-3 mb-3">Navigation</p>
           <ul className="space-y-1">
             {navItems.map((item) => {
@@ -93,11 +100,53 @@ export default function Sidebar({
               );
             })}
           </ul>
+
+          {/* Admin-only: Team Access */}
+          {access?.role === "admin" && (
+            <>
+              <p className="text-gym-muted text-xs font-semibold tracking-widest uppercase px-3 mt-6 mb-3">
+                Admin
+              </p>
+              <Link
+                href="/admin"
+                onClick={onMobileClose}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+                  pathname === "/admin"
+                    ? "bg-gym-accent text-white"
+                    : "text-gym-text-secondary hover:text-gym-text hover:bg-gym-border"
+                }`}
+              >
+                <span className="text-base">◐</span>
+                Team Access
+              </Link>
+            </>
+          )}
         </nav>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-gym-border">
-          <p className="text-gym-muted text-xs">© 2026 The Yard Gym</p>
+        {/* Footer — user + logout */}
+        <div className="px-4 py-4 border-t border-gym-border">
+          {access?.email && (
+            <div className="mb-3 px-2">
+              <p className="text-gym-text text-xs font-medium truncate" title={access.email}>
+                {access.email}
+              </p>
+              <p className="text-gym-muted text-[10px] uppercase tracking-wider">
+                {access.role === "admin" ? "Admin" : "Staff"}
+              </p>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gym-text-secondary hover:text-gym-text hover:bg-gym-border transition"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            Sign out
+          </button>
         </div>
       </aside>
     </>

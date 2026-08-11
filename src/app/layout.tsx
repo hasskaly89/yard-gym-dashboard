@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import RootLayoutClient from '@/components/RootLayoutClient'
+import { getCurrentUser } from '@/lib/auth/profile'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -30,9 +31,14 @@ export const metadata: Metadata = {
   },
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const user = await getCurrentUser()
+  const access = user
+    ? { role: user.role, allowedPages: user.allowedPages, email: user.email }
+    : null
+
   return (
     <html lang="en">
       <head>
@@ -42,7 +48,7 @@ export default function RootLayout({
         />
       </head>
       <body className={inter.className}>
-        <RootLayoutClient>
+        <RootLayoutClient access={access}>
           {children}
         </RootLayoutClient>
       </body>

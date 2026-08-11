@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { computeAccess, canAccess, pathToPageKey } from '@/lib/access'
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -62,6 +63,30 @@ export async function proxy(request: NextRequest) {
   // Already logged in and hitting /login → send them home
   if (user && isAllowed && pathname === '/login') {
     return NextResponse.redirect(new URL('/', request.url))
+  }
+
+  // Per-page access control (admin sees all; staff only their allowed pages).
+  if (user && isAllowed && !isPublic) {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('role, allowed_pages')
+      .eq('id', user.id)
+      .maybeSingle()
+    const access = computeAccess({
+      email: userEmail,
+      profileRole: prof?.role,
+      profileAllowedPages: prof?.allowed_pages,
+    })
+
+    // Admin-only Team Access screen
+    if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+      if (access.role !== 'admin') {
+        return NextResponse.redirect(new URL('/', request.url))
+      }
+    } else if (!canAccess(pathToPageKey(pathname), access)) {
+      // Staff hitting a page they're not granted → back to their dashboard
+      return NextResponse.redirect(new URL('/', request.url))
+    }
   }
 
   return supabaseResponse

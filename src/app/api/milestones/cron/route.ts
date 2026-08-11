@@ -6,6 +6,7 @@ import { syncMemberMemberships } from '@/lib/mindbody/active-memberships'
 import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
 import { isDue, markRun } from '@/lib/mindbody/sync-state'
 import { runRetentionScoring } from '@/lib/retention/run-scoring'
+import { runBriefs } from '@/lib/dashboard/run-briefs'
 
 // Cron does: (weekly) refresh membership flags → (nightly) incremental visit
 // sync (paid members only) → birthday/anniversary/inactivity checks.
@@ -96,6 +97,14 @@ export async function GET(req: NextRequest) {
     summary.scoring = await runRetentionScoring()
   } catch (err) {
     summary.errors.push(`scoring: ${(err as Error).message}`)
+  }
+
+  // Step 0d: dashboard agent briefs (email → tasks). Skips inboxes that aren't
+  // connected yet; costs nothing until email credentials are set.
+  try {
+    await runBriefs()
+  } catch (err) {
+    summary.errors.push(`briefs: ${(err as Error).message}`)
   }
 
   // Fetch all active members. PostgREST caps select() at 1000 rows by default,

@@ -166,6 +166,24 @@ export default function DashboardPage() {
 }
 
 function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
+  if (scope === 'business') {
+    return (
+      <div className="border border-dashed border-gray-300 rounded-xl p-6 text-center">
+        <p className="text-2xl mb-2">📥</p>
+        <p className="text-sm font-medium text-gray-800">Connect your business inbox</p>
+        <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto mb-3">
+          Once connected, your agent reads it each morning and lists what needs doing here. The
+          Yard's Workspace requires Google sign-in rather than an app password.
+        </p>
+        <a
+          href="/api/auth/gmail/connect?scope=business"
+          className="inline-block text-xs font-medium text-white bg-gym-accent hover:bg-gym-accent-hover rounded-lg px-4 py-2 transition-colors"
+        >
+          Connect with Google
+        </a>
+      </div>
+    );
+  }
   return (
     <div className="border border-dashed border-gray-300 rounded-xl p-6 text-center">
       <p className="text-2xl mb-2">📥</p>

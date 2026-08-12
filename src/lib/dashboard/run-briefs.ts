@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { emailAccountFor, fetchRecentEmails } from '@/lib/email/imap';
+import { emailAccountFor, fetchRecentEmails, type FetchedEmail } from '@/lib/email/imap';
+import { fetchRecentEmailsOAuth, isOAuthConnected } from '@/lib/email/gmail-oauth';
 import { generateBrief } from '@/lib/ai/brief';
 import { computeMindBodyInsights } from './insights';
 
@@ -10,6 +11,21 @@ export type BriefRunResult = {
   tasks: number;
   error?: string;
 };
+
+// Business (Workspace) inbox uses Google OAuth — app passwords are disabled
+// org-wide there. Personal keeps the simpler IMAP + app-password path.
+// Returns null when the scope's inbox isn't connected yet.
+async function fetchEmailsForScope(
+  scope: 'personal' | 'business',
+): Promise<FetchedEmail[] | null> {
+  if (scope === 'business') {
+    if (!(await isOAuthConnected('business'))) return null;
+    return fetchRecentEmailsOAuth('business', { sinceDays: 3, max: 40 });
+  }
+  const acct = emailAccountFor('personal');
+  if (!acct) return null;
+  return fetchRecentEmails(acct, { sinceDays: 3, max: 40 });
+}
 
 // Generates + stores the personal and business briefs. Called nightly by the
 // milestones cron and available as a manual trigger. Any scope without email
@@ -30,13 +46,12 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
   }
 
   for (const scope of ['personal', 'business'] as const) {
-    const acct = emailAccountFor(scope);
-    if (!acct) {
+    const emails = await fetchEmailsForScope(scope);
+    if (!emails) {
       results.push({ scope, ok: false, emails: 0, tasks: 0, error: 'inbox not connected' });
       continue;
     }
     try {
-      const emails = await fetchRecentEmails(acct, { sinceDays: 3, max: 40 });
       const brief = await generateBrief(
         scope,
         emails,

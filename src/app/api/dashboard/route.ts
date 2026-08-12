@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { emailAccountFor } from '@/lib/email/imap';
+import { isOAuthConnected } from '@/lib/email/gmail-oauth';
 
 // Powers the redesigned Dashboard: live MindBody insights (Supabase, $0) plus
 // the agent's personal/business briefs (once the inbox is connected + the
@@ -47,7 +48,7 @@ export async function GET() {
     briefs,
     config: {
       personalConnected: !!emailAccountFor('personal'),
-      businessConnected: !!emailAccountFor('business'),
+      businessConnected: await isOAuthConnected('business'),
     },
     updatedAt: new Date().toISOString(),
   });

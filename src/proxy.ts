@@ -27,6 +27,16 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  // A redirect needs its own response object, but getUser() above may have
+  // just refreshed the session and written the new cookies onto
+  // supabaseResponse — copy them over so a redirect never silently drops a
+  // refreshed session (which otherwise forces an unnecessary re-login).
+  function redirect(url: URL) {
+    const res = NextResponse.redirect(url)
+    supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c))
+    return res
+  }
+
   const isPublic = pathname === '/login' || pathname.startsWith('/auth')
 
   // Admin allowlist — set ADMIN_EMAILS on Vercel as a comma-separated list.
@@ -64,7 +74,7 @@ export async function proxy(request: NextRequest) {
   if (!user && !isPublic) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
-    return NextResponse.redirect(loginUrl)
+    return redirect(loginUrl)
   }
 
   // Logged in but email not in allowlist → block
@@ -73,12 +83,12 @@ export async function proxy(request: NextRequest) {
     loginUrl.searchParams.set('error', 'not_allowed')
     // sign them out so they can try with a different account
     await supabase.auth.signOut()
-    return NextResponse.redirect(loginUrl)
+    return redirect(loginUrl)
   }
 
   // Already logged in and hitting /login → send them home
   if (user && isAllowed && pathname === '/login') {
-    return NextResponse.redirect(new URL('/', request.url))
+    return redirect(new URL('/', request.url))
   }
 
   // Per-page access control (admin sees all; staff only their allowed pages).
@@ -92,11 +102,11 @@ export async function proxy(request: NextRequest) {
     // Admin-only Team Access screen
     if (pathname === '/admin' || pathname.startsWith('/admin/')) {
       if (access.role !== 'admin') {
-        return NextResponse.redirect(new URL('/', request.url))
+        return redirect(new URL('/', request.url))
       }
     } else if (!canAccess(pathToPageKey(pathname), access)) {
       // Staff hitting a page they're not granted → back to their dashboard
-      return NextResponse.redirect(new URL('/', request.url))
+      return redirect(new URL('/', request.url))
     }
   }
 

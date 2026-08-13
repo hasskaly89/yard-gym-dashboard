@@ -38,6 +38,14 @@ type DashboardData = {
   config: { personalConnected: boolean; businessConnected: boolean };
 };
 
+type MetaAdsSummary = {
+  tokenPending: boolean;
+  totals: { spend: number; leads: number };
+} | null;
+
+const fmtAud = (n: number) =>
+  `$${n.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`;
+
 const URGENCY: Record<Urgency, { dot: string; ring: string }> = {
   high: { dot: 'bg-rose-500', ring: 'border-l-rose-500' },
   medium: { dot: 'bg-amber-500', ring: 'border-l-amber-500' },
@@ -68,6 +76,7 @@ function activeTaskCount(brief: Brief): number {
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [metaAds, setMetaAds] = useState<MetaAdsSummary>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -76,6 +85,11 @@ export default function DashboardPage() {
       .then((d: DashboardData) => setData(d))
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    fetch('/api/meta-ads?range=last_30d')
+      .then((r) => r.json())
+      .then((d: MetaAdsSummary) => setMetaAds(d))
+      .catch(() => {});
   }, []);
 
   return (
@@ -96,7 +110,7 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
         <div className="space-y-6">
-          <DeskTiles data={data} />
+          <DeskTiles data={data} metaAds={metaAds} />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             <div className="lg:col-span-2">
               <InboxCard data={data} />
@@ -109,9 +123,10 @@ export default function DashboardPage() {
   );
 }
 
-function DeskTiles({ data }: { data: DashboardData | null }) {
+function DeskTiles({ data, metaAds }: { data: DashboardData | null; metaAds: MetaAdsSummary }) {
   const inboxCount = activeTaskCount(data?.briefs.business ?? null) + activeTaskCount(data?.briefs.personal ?? null);
   const atRiskCount = data?.insights ? data.insights.risk.high + data.insights.risk.medium : 0;
+  const marketingConnected = !!metaAds && !metaAds.tokenPending;
 
   return (
     <div>
@@ -119,7 +134,12 @@ function DeskTiles({ data }: { data: DashboardData | null }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <DeskTile label="Inbox" value={inboxCount} sub="need you" href="#inbox" />
         <DeskTile label="Retention" value={atRiskCount} sub="to call" href="/retention" tone="warn" />
-        <DeskTile label="Marketing" value={null} sub="not connected" href="/meta-ads" />
+        <DeskTile
+          label="Marketing"
+          value={marketingConnected ? metaAds!.totals.leads : null}
+          sub={marketingConnected ? `leads · ${fmtAud(metaAds!.totals.spend)} spent` : 'not connected'}
+          href="/meta-ads"
+        />
         <DeskTile label="Leads" value={null} sub="not synced" href="/gohighlevel" />
       </div>
     </div>

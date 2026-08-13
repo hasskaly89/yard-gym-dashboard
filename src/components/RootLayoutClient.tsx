@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Sidebar from './Sidebar'
+import FloatingChat from './dashboard/FloatingChat'
 import type { PageKey, Role } from '@/lib/access'
 
 export type NavAccess = { role: Role; allowedPages: PageKey[]; email: string } | null
@@ -57,6 +58,7 @@ export default function RootLayoutClient({
         </div>
         {children}
       </main>
+      {pathname !== '/' && <FloatingChat />}
     </div>
   )
 }

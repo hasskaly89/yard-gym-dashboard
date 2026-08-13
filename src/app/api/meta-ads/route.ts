@@ -185,7 +185,7 @@ async function fetchPlatforms(act: string, range: string): Promise<PlatformBreak
     date_preset: range,
     breakdowns: 'publisher_platform',
     limit: '20',
-    fields: 'spend,impressions,clicks,actions,publisher_platform',
+    fields: 'spend,impressions,clicks,actions',
   });
   return res.data
     .map((row) => ({
@@ -233,8 +233,16 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
       fields:
         'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type,object_story_spec,asset_feed_spec}',
     }),
-    fetchDaily(act, range),
-    fetchPlatforms(act, range),
+    // Chart data is supplementary — fail soft so a breakdown hiccup never
+    // takes down the core numbers/ads above.
+    fetchDaily(act, range).catch((err) => {
+      console.error('Meta Ads daily trend fetch failed:', err);
+      return [] as DailyPoint[];
+    }),
+    fetchPlatforms(act, range).catch((err) => {
+      console.error('Meta Ads platform breakdown fetch failed:', err);
+      return [] as PlatformBreakdown[];
+    }),
   ]);
   const adMeta = new Map(adsResp.data.map((a) => [a.id, a]));
 

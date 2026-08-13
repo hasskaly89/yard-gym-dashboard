@@ -52,6 +52,22 @@ export interface MetaCampaign {
   cpl: number | null;
 }
 
+export interface DailyPoint {
+  date: string; // YYYY-MM-DD
+  spend: number;
+  leads: number;
+  impressions: number;
+  clicks: number;
+}
+
+export interface PlatformBreakdown {
+  platform: string; // facebook | instagram | audience_network | messenger
+  spend: number;
+  leads: number;
+  impressions: number;
+  clicks: number;
+}
+
 export interface MetaAdsData {
   mock: boolean;
   tokenPending: boolean;
@@ -71,6 +87,10 @@ export interface MetaAdsData {
   };
   campaigns: MetaCampaign[];
   ads: MetaAd[];
+  // Only populated in live mode — the snapshot is a single fixed 30-day
+  // total, it has no day-by-day or platform-split breakdown to show.
+  daily: DailyPoint[];
+  platforms: PlatformBreakdown[];
 }
 
 const CAMPAIGNS: MetaCampaign[] = [
@@ -184,5 +204,7 @@ export function buildSnapshot(): MetaAdsData {
     },
     campaigns: CAMPAIGNS,
     ads,
+    daily: [],
+    platforms: [],
   };
 }

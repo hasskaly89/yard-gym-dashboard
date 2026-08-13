@@ -5,6 +5,8 @@ import {
   type MetaAdsData,
   type MetaCampaign,
   type AdResultType,
+  type DailyPoint,
+  type PlatformBreakdown,
 } from './snapshot';
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -142,6 +144,60 @@ function extractCreative(c: GraphCreative | undefined): MetaAd['creative'] {
   };
 }
 
+// Day-by-day spend/leads trend, for the performance-over-time chart.
+async function fetchDaily(act: string, range: string): Promise<DailyPoint[]> {
+  type DailyRow = {
+    date_start: string;
+    spend?: string;
+    impressions?: string;
+    clicks?: string;
+    actions?: Array<{ action_type: string; value: string }>;
+  };
+  const res = await graph<{ data: DailyRow[] }>(`${act}/insights`, {
+    level: 'account',
+    date_preset: range,
+    time_increment: '1',
+    limit: '90',
+    fields: 'spend,impressions,clicks,actions',
+  });
+  return res.data
+    .map((row) => ({
+      date: row.date_start,
+      spend: Number(row.spend || 0),
+      leads: sumLeads(row.actions),
+      impressions: Number(row.impressions || 0),
+      clicks: Number(row.clicks || 0),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Facebook vs Instagram (vs Audience Network / Messenger) split.
+async function fetchPlatforms(act: string, range: string): Promise<PlatformBreakdown[]> {
+  type PlatformRow = {
+    publisher_platform?: string;
+    spend?: string;
+    impressions?: string;
+    clicks?: string;
+    actions?: Array<{ action_type: string; value: string }>;
+  };
+  const res = await graph<{ data: PlatformRow[] }>(`${act}/insights`, {
+    level: 'account',
+    date_preset: range,
+    breakdowns: 'publisher_platform',
+    limit: '20',
+    fields: 'spend,impressions,clicks,actions,publisher_platform',
+  });
+  return res.data
+    .map((row) => ({
+      platform: row.publisher_platform || 'unknown',
+      spend: Number(row.spend || 0),
+      leads: sumLeads(row.actions),
+      impressions: Number(row.impressions || 0),
+      clicks: Number(row.clicks || 0),
+    }))
+    .sort((a, b) => b.spend - a.spend);
+}
+
 // ── Live fetch ────────────────────────────────────────────────────────────────
 async function fetchLive(range: string): Promise<MetaAdsData> {
   const act = `act_${ACCOUNT_ID}`;
@@ -162,26 +218,24 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     cpm?: string;
     actions?: Array<{ action_type: string; value: string }>;
   };
-  const insights = await graph<{ data: InsightRow[] }>(`${act}/insights`, {
-    level: 'ad',
-    date_preset: range,
-    limit: '500',
-    fields:
-      'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions',
-  });
-
-  // 2) Ad entities for status + creative (only for ads that have insight rows).
-  type AdRow = {
-    id: string;
-    name: string;
-    effective_status: string;
-    creative?: GraphCreative;
-  };
-  const adsResp = await graph<{ data: AdRow[] }>(`${act}/ads`, {
-    limit: '500',
-    fields:
-      'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type,object_story_spec,asset_feed_spec}',
-  });
+  type AdRow = { id: string; name: string; effective_status: string; creative?: GraphCreative };
+  const [insights, adsResp, daily, platforms] = await Promise.all([
+    graph<{ data: InsightRow[] }>(`${act}/insights`, {
+      level: 'ad',
+      date_preset: range,
+      limit: '500',
+      fields:
+        'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions',
+    }),
+    // 2) Ad entities for status + creative (only for ads that have insight rows).
+    graph<{ data: AdRow[] }>(`${act}/ads`, {
+      limit: '500',
+      fields:
+        'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type,object_story_spec,asset_feed_spec}',
+    }),
+    fetchDaily(act, range),
+    fetchPlatforms(act, range),
+  ]);
   const adMeta = new Map(adsResp.data.map((a) => [a.id, a]));
 
   const ads: MetaAd[] = insights.data
@@ -277,6 +331,8 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     },
     campaigns,
     ads,
+    daily,
+    platforms,
   };
 }
 

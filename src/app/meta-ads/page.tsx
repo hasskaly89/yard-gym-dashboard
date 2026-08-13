@@ -72,6 +72,8 @@ interface MetaAdsData {
   };
   campaigns: Campaign[];
   ads: Ad[];
+  daily: { date: string; spend: number; leads: number }[];
+  platforms: { platform: string; spend: number; leads: number }[];
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────────
@@ -161,6 +163,152 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-gym-muted text-[11px] uppercase tracking-wide">{label}</p>
       <p className="text-gym-text text-sm font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+const PLATFORM_LABEL: Record<string, string> = {
+  facebook: 'Facebook',
+  instagram: 'Instagram',
+  audience_network: 'Audience Network',
+  messenger: 'Messenger',
+  unknown: 'Other',
+};
+
+// Single-series line + area chart with a hover crosshair. One axis (value) —
+// spend and leads are always rendered as two separate charts, never one
+// dual-axis chart, since they're different units.
+const LINE_COLORS = {
+  rose: { stroke: '#e11d48', fill: 'rgba(225,29,72,0.08)' },
+  emerald: { stroke: '#059669', fill: 'rgba(5,150,105,0.08)' },
+} as const;
+
+function LineChart({
+  data,
+  color,
+  formatValue,
+}: {
+  data: { date: string; value: number }[];
+  color: keyof typeof LINE_COLORS;
+  formatValue: (n: number) => string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const width = 600;
+  const height = 160;
+  const padding = { top: 12, right: 8, bottom: 22, left: 8 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+  const max = Math.max(1, ...data.map((d) => d.value));
+  const xFor = (i: number) => padding.left + (data.length <= 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
+  const yFor = (v: number) => padding.top + innerH - (v / max) * innerH;
+  const c = LINE_COLORS[color];
+
+  if (data.length === 0) {
+    return <div className="h-40 flex items-center justify-center text-gym-muted text-sm">No data.</div>;
+  }
+
+  const linePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${xFor(i)} ${yFor(d.value)}`).join(' ');
+  const areaPath = `${linePath} L ${xFor(data.length - 1)} ${padding.top + innerH} L ${xFor(0)} ${padding.top + innerH} Z`;
+  const labelIdxs = data.length > 1 ? [0, Math.floor((data.length - 1) / 2), data.length - 1] : [0];
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+
+  function handleMove(e: React.MouseEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relX = ((e.clientX - rect.left) / rect.width) * width;
+    let nearest = 0;
+    let nearestDist = Infinity;
+    data.forEach((_, i) => {
+      const dist = Math.abs(xFor(i) - relX);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = i;
+      }
+    });
+    setHover(nearest);
+  }
+
+  const hoveredPoint = hover != null ? data[hover] : null;
+
+  return (
+    <div className="relative overflow-visible">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-40 cursor-crosshair"
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHover(null)}
+      >
+        <path d={areaPath} fill={c.fill} stroke="none" />
+        <path d={linePath} fill="none" stroke={c.stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        {hover != null && (
+          <>
+            <line x1={xFor(hover)} x2={xFor(hover)} y1={padding.top} y2={padding.top + innerH} stroke="#e5e7eb" strokeWidth="1" />
+            <circle cx={xFor(hover)} cy={yFor(data[hover].value)} r="4" fill={c.stroke} stroke="white" strokeWidth="1.5" />
+          </>
+        )}
+        {labelIdxs.map((i) => (
+          <text
+            key={i}
+            x={xFor(i)}
+            y={height - 6}
+            fontSize="9"
+            textAnchor={i === 0 ? 'start' : i === data.length - 1 ? 'end' : 'middle'}
+            fill="#9ca3af"
+          >
+            {fmtDate(data[i].date)}
+          </text>
+        ))}
+      </svg>
+      {hoveredPoint && (
+        <div
+          className="absolute bg-gym-text text-white text-xs rounded-lg px-2.5 py-1.5 pointer-events-none shadow-lg whitespace-nowrap z-10"
+          style={{
+            left: `${(xFor(hover!) / width) * 100}%`,
+            top: `${(yFor(hoveredPoint.value) / height) * 100}%`,
+            transform: 'translate(-50%, -130%)',
+          }}
+        >
+          <p className="font-semibold">{formatValue(hoveredPoint.value)}</p>
+          <p className="text-gray-300">{fmtDate(hoveredPoint.date)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Horizontal bar chart, single measure — value drives bar length, an
+// optional sublabel (e.g. lead count) is direct-labeled rather than encoded
+// as a second axis.
+const BAR_COLORS = { rose: 'bg-rose-500', blue: 'bg-blue-500' } as const;
+
+function BarChart({
+  items,
+  color,
+  formatValue,
+}: {
+  items: { label: string; value: number; sublabel?: string }[];
+  color: keyof typeof BAR_COLORS;
+  formatValue: (n: number) => string;
+}) {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <div key={item.label}>
+          <div className="flex items-center justify-between text-xs mb-1 gap-2">
+            <span className="text-gym-text font-medium truncate">{item.label}</span>
+            <span className="text-gym-text-secondary tabular-nums flex-none">
+              {formatValue(item.value)}
+              {item.sublabel ? ` · ${item.sublabel}` : ''}
+            </span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full ${BAR_COLORS[color]} rounded-full`}
+              style={{ width: `${Math.max(2, (item.value / max) * 100)}%` }}
+            />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -420,6 +568,69 @@ export default function MetaAdsPage() {
                 {data.totals.cpl != null && ` Your blended cost per lead is ${aud(data.totals.cpl)}.`}
               </p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Performance over time */}
+      {!loading && data && (
+        <div className="mb-8">
+          <h2 className="text-gym-text font-semibold mb-3">Performance over time</h2>
+          {data.daily.length > 0 ? (
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="bg-gym-surface border border-gym-border rounded-xl p-5">
+                <p className="text-gym-muted text-[11px] uppercase tracking-wide mb-2">Daily spend</p>
+                <LineChart
+                  data={data.daily.map((d) => ({ date: d.date, value: d.spend }))}
+                  color="rose"
+                  formatValue={(n) => aud(n, 0)}
+                />
+              </div>
+              <div className="bg-gym-surface border border-gym-border rounded-xl p-5">
+                <p className="text-gym-muted text-[11px] uppercase tracking-wide mb-2">Daily leads</p>
+                <LineChart
+                  data={data.daily.map((d) => ({ date: d.date, value: d.leads }))}
+                  color="emerald"
+                  formatValue={(n) => num(n)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gym-surface border border-dashed border-gray-300 rounded-xl p-8 text-center text-gym-muted text-sm">
+              Daily trend needs a live Meta connection — not available on the sample snapshot.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Spend breakdowns */}
+      {!loading && data && (data.campaigns.length > 0 || data.tokenPending) && (
+        <div className="mb-8 grid md:grid-cols-2 gap-4">
+          <div className="bg-gym-surface border border-gym-border rounded-xl p-5">
+            <h2 className="text-gym-text font-semibold mb-4">Spend by campaign</h2>
+            <BarChart
+              items={data.campaigns.map((c) => ({ label: c.name, value: c.spend, sublabel: `${c.leads} leads` }))}
+              color="rose"
+              formatValue={(n) => aud(n, 0)}
+            />
+          </div>
+          <div className="bg-gym-surface border border-gym-border rounded-xl p-5">
+            <h2 className="text-gym-text font-semibold mb-4">Facebook vs Instagram</h2>
+            {data.platforms.length > 0 ? (
+              <BarChart
+                items={data.platforms.map((p) => ({
+                  label: PLATFORM_LABEL[p.platform] ?? p.platform,
+                  value: p.spend,
+                  sublabel: `${p.leads} leads`,
+                }))}
+                color="blue"
+                formatValue={(n) => aud(n, 0)}
+              />
+            ) : (
+              <div className="py-8 text-center text-gym-muted text-sm">
+                Platform split needs a live Meta connection.
+              </div>
+            )}
           </div>
         </div>
       )}

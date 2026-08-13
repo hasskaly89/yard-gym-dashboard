@@ -58,7 +58,7 @@ export default function RootLayoutClient({
         </div>
         {children}
       </main>
-      {pathname !== '/' && <FloatingChat />}
+      <FloatingChat />
     </div>
   )
 }

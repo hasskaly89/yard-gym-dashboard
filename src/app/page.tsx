@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 type Urgency = 'high' | 'medium' | 'low';
@@ -95,14 +95,13 @@ export default function DashboardPage() {
       {loading ? (
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-          <div className="space-y-6">
-            <DeskTiles data={data} />
-            <InboxCard data={data} />
+        <div className="space-y-6">
+          <DeskTiles data={data} />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <div className="lg:col-span-2">
+              <InboxCard data={data} />
+            </div>
             <MindBodyRetentionSidebar insights={data?.insights ?? null} />
-          </div>
-          <div className="xl:sticky xl:top-8">
-            <ChatPanel data={data} />
           </div>
         </div>
       )}
@@ -157,149 +156,6 @@ function DeskTile({
     <a href={href}>{inner}</a>
   ) : (
     <Link href={href}>{inner}</Link>
-  );
-}
-
-type ChatMsg = { role: 'user' | 'assistant'; content: string };
-
-function buildOpeningMessage(data: DashboardData | null): string {
-  if (!data) return "Loading today's picture…";
-  const lines: string[] = [];
-  const bizTasks = activeTaskCount(data.briefs.business);
-  const persTasks = activeTaskCount(data.briefs.personal);
-  const atRisk = data.insights ? data.insights.risk.high + data.insights.risk.medium : 0;
-  const topAtRisk = data.insights?.atRisk?.[0];
-
-  if (topAtRisk) {
-    lines.push(`${topAtRisk.name} is flagged high retention risk — worth a call today.`);
-  }
-  if (bizTasks > 0) lines.push(`${bizTasks} business task${bizTasks === 1 ? '' : 's'} need your attention.`);
-  if (persTasks > 0) lines.push(`${persTasks} personal task${persTasks === 1 ? '' : 's'} waiting on you.`);
-  if (atRisk > 0) lines.push(`${atRisk} members flagged at risk overall.`);
-
-  if (lines.length === 0) {
-    return "Nothing urgent on the board right now — you're caught up. ✅";
-  }
-  const numbered = lines.slice(0, 4).map((l, i) => `${i + 1}. ${l}`).join('\n');
-  return `Here's where things stand today:\n\n${numbered}\n\nAsk me anything, or head to the tiles to chip away at it.`;
-}
-
-function ChatPanel({ data }: { data: DashboardData | null }) {
-  const [messages, setMessages] = useState<ChatMsg[] | null>(null);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (data && messages === null) {
-      setMessages([{ role: 'assistant', content: buildOpeningMessage(data) }]);
-    }
-  }, [data, messages]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages, sending]);
-
-  async function send(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || sending) return;
-    const history = messages ?? [];
-    const next = [...history, { role: 'user' as const, content: trimmed }];
-    setMessages(next);
-    setInput('');
-    setSending(true);
-    try {
-      const res = await fetch('/api/dashboard/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, history }),
-      });
-      const json = await res.json();
-      setMessages([...next, { role: 'assistant', content: json.reply ?? json.error ?? 'No reply.' }]);
-    } catch {
-      setMessages([...next, { role: 'assistant', content: "Couldn't reach the assistant — try again." }]);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  const topTask =
-    (Array.isArray(data?.briefs.business?.tasks) ? (data!.briefs.business!.tasks as Task[]) : []).find(
-      (t) => !t.completedAt,
-    ) ?? null;
-  const topAtRisk = data?.insights?.atRisk?.[0];
-
-  const chips = [
-    topTask && { label: `Follow up: ${topTask.title}`, msg: `What's the situation with "${topTask.title}"?` },
-    topAtRisk && { label: `Call ${topAtRisk.name.split(' ')[0]}`, msg: `Why should I call ${topAtRisk.name}?` },
-    { label: 'What needs attention this week?', msg: 'What needs my attention this week?' },
-  ].filter(Boolean) as { label: string; msg: string }[];
-
-  return (
-    <div className="bg-white border border-gym-border rounded-xl overflow-hidden flex flex-col h-[calc(100vh-180px)] min-h-[500px]">
-      <div className="px-5 py-3 border-b border-gym-border">
-        <h2 className="text-sm font-semibold text-gray-900">Chat</h2>
-      </div>
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        {(messages ?? []).map((m, i) => (
-          <div key={i} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-            <div
-              className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm whitespace-pre-line ${
-                m.role === 'user'
-                  ? 'bg-gym-accent text-white'
-                  : 'bg-gray-50 border border-gym-border text-gray-800'
-              }`}
-            >
-              {m.content}
-            </div>
-          </div>
-        ))}
-        {sending && (
-          <div className="flex justify-start">
-            <div className="bg-gray-50 border border-gym-border rounded-xl px-4 py-2.5 text-sm text-gray-400">
-              Thinking…
-            </div>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-      <div className="px-5 pb-3 flex flex-wrap gap-2">
-        {chips.map((c) => (
-          <button
-            key={c.label}
-            type="button"
-            onClick={() => send(c.msg)}
-            disabled={sending}
-            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gym-border text-gray-600 hover:bg-gray-50 transition disabled:opacity-50"
-          >
-            {c.label}
-          </button>
-        ))}
-      </div>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(input);
-        }}
-        className="p-4 border-t border-gym-border flex gap-2"
-      >
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about today, or tell it to do something…"
-          disabled={sending}
-          className="flex-1 bg-gray-50 border border-gym-border rounded-lg px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-400 focus:ring-1 focus:ring-gray-200 disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          className="px-4 py-2 rounded-lg bg-gym-accent text-white text-sm font-medium hover:bg-gym-accent-hover transition disabled:opacity-50"
-        >
-          Send
-        </button>
-      </form>
-    </div>
   );
 }
 

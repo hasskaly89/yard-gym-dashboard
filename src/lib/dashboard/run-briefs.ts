@@ -1,7 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { emailAccountFor, fetchRecentEmails, type FetchedEmail } from '@/lib/email/imap';
 import { fetchRecentEmailsOAuth, isOAuthConnected } from '@/lib/email/gmail-oauth';
-import { generateBrief } from '@/lib/ai/brief';
+import { generateBrief, type BriefTask } from '@/lib/ai/brief';
 import { computeMindBodyInsights } from './insights';
 
 export type BriefRunResult = {
@@ -25,6 +25,42 @@ async function fetchEmailsForScope(
   const acct = emailAccountFor('personal');
   if (!acct) return null;
   return fetchRecentEmails(acct, { sinceDays: 3, max: 40 });
+}
+
+// Best-effort: attach the source email's link to each task by matching the
+// AI's "{sender} - {subject}" source string against the fetched emails —
+// lets the dashboard open the actual email a task came from. Uses word-token
+// overlap rather than a strict substring match, since the AI doesn't always
+// copy the subject verbatim (paraphrases, truncates, reorders).
+function tokenize(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .replace(/^(re|fwd?):\s*/i, '')
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 2),
+  );
+}
+
+function linkTasksToEmails(tasks: BriefTask[], emails: FetchedEmail[]): BriefTask[] {
+  return tasks.map((t) => {
+    const subjectPart = t.source.includes(' - ')
+      ? t.source.split(' - ').slice(1).join(' - ')
+      : t.source;
+    const sourceTokens = tokenize(subjectPart);
+    if (sourceTokens.size === 0) return { ...t, url: null };
+
+    let best: { url: string | null; score: number } | null = null;
+    for (const e of emails) {
+      const subjTokens = tokenize(e.subject);
+      if (subjTokens.size === 0) continue;
+      let overlap = 0;
+      for (const tok of sourceTokens) if (subjTokens.has(tok)) overlap++;
+      const score = overlap / Math.min(sourceTokens.size, subjTokens.size);
+      if (score > 0.5 && (!best || score > best.score)) best = { url: e.url, score };
+    }
+    return { ...t, url: best?.url ?? null };
+  });
 }
 
 // Generates + stores the personal and business briefs. Called nightly by the
@@ -66,8 +102,9 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
         {
           scope,
           summary: brief.summary,
-          tasks: brief.tasks,
+          tasks: linkTasksToEmails(brief.tasks, emails),
           emails_scanned: emails.length,
+          emails: emails.slice(0, 20),
           generated_at: now,
           updated_at: now,
         },

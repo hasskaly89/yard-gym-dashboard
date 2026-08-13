@@ -5,6 +5,7 @@ import Link from 'next/link';
 import TodayCalls, { type TodayCallsMember } from '@/components/retention/TodayCalls';
 import LogButton, { type LogOptions } from '@/components/retention/LogButton';
 import { logContact, snoozeMember } from './actions';
+import { daysSinceSydney } from '@/lib/retention/dates';
 import type {
   ContactInfo,
   ContactStateResponse,
@@ -42,7 +43,7 @@ const HEALTH_STYLE: Record<RiskBand, string> = {
 };
 
 function daysSinceIso(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return daysSinceSydney(iso) ?? 0;
 }
 
 function snoozeDateLabel(iso: string): string {
@@ -83,6 +84,9 @@ type ColumnDef = {
   text: string;
   bar: string;
   pill: string;
+  headerBg: string;
+  headerText: string;
+  headerPill: string;
 };
 
 const COLUMN_DEFS: ColumnDef[] = [
@@ -93,6 +97,9 @@ const COLUMN_DEFS: ColumnDef[] = [
     text: 'text-emerald-700',
     bar: 'bg-emerald-500',
     pill: 'bg-emerald-50 text-emerald-700',
+    headerBg: 'bg-emerald-600',
+    headerText: 'text-white',
+    headerPill: 'bg-white/20 text-white',
   },
   {
     key: 'SLOWING',
@@ -101,6 +108,9 @@ const COLUMN_DEFS: ColumnDef[] = [
     text: 'text-amber-700',
     bar: 'bg-amber-500',
     pill: 'bg-amber-50 text-amber-700',
+    headerBg: 'bg-amber-500',
+    headerText: 'text-white',
+    headerPill: 'bg-white/25 text-white',
   },
   {
     key: 'SLIDING',
@@ -109,6 +119,9 @@ const COLUMN_DEFS: ColumnDef[] = [
     text: 'text-rose-700',
     bar: 'bg-rose-500',
     pill: 'bg-rose-50 text-rose-700',
+    headerBg: 'bg-rose-600',
+    headerText: 'text-white',
+    headerPill: 'bg-white/20 text-white',
   },
   {
     key: 'STOPPED',
@@ -117,6 +130,9 @@ const COLUMN_DEFS: ColumnDef[] = [
     text: 'text-gray-700',
     bar: 'bg-gray-400',
     pill: 'bg-gray-100 text-gray-700',
+    headerBg: 'bg-gray-700',
+    headerText: 'text-white',
+    headerPill: 'bg-white/20 text-white',
   },
 ];
 
@@ -140,6 +156,7 @@ function MemberCard({
   onCopy,
   onLog,
   onSnooze,
+  onSelect,
 }: {
   member: RetentionMember;
   col: ColumnDef;
@@ -152,6 +169,7 @@ function MemberCard({
   onCopy: (m: RetentionMember) => void;
   onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
   onSnooze: (m: TodayCallsMember) => void;
+  onSelect: (id: string) => void;
 }) {
   // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
   // Cap at 100% so growth doesn't visually swamp the column.
@@ -168,17 +186,17 @@ function MemberCard({
       : null;
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(member.id)}
+      onKeyDown={(e) => e.key === 'Enter' && onSelect(member.id)}
+      className="bg-white border border-gray-200 rounded-lg p-3 mb-2 hover:border-gray-300 hover:shadow-sm transition cursor-pointer"
+    >
       <div className="flex items-center justify-between gap-2 mb-2">
-        <a
-          href={mindBodyProfileUrl(member.id)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-gray-900 text-sm font-medium truncate hover:text-gym-accent hover:underline transition flex-1"
-          title="Open MindBody profile"
-        >
+        <p className="text-gray-900 text-sm font-medium truncate flex-1">
           {member.firstName} {member.lastName}
-        </a>
+        </p>
         <div className="flex items-center gap-1 shrink-0">
           <span
             className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${HEALTH_STYLE[member.riskBand]}`}
@@ -196,6 +214,7 @@ function MemberCard({
               target="_blank"
               rel="noopener noreferrer"
               title="Open in GHL"
+              onClick={(e) => e.stopPropagation()}
               className="text-[10px] font-medium tracking-wide uppercase px-2 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
             >
               GHL
@@ -206,6 +225,7 @@ function MemberCard({
               type="button"
               onClick={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 onCopy(member);
               }}
               title={copied ? 'Copied' : `Copy ${member.mobilePhone}`}
@@ -244,7 +264,10 @@ function MemberCard({
             : `Last contact: ${contactDays}d ago by ${contact!.contactedByName}`}
         </p>
       )}
-      <div className="flex flex-wrap items-start gap-1 mt-2">
+      <div
+        className="flex flex-wrap items-start gap-1 mt-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         <LogButton member={member} pending={pending} onLog={onLog} />
         <button
           type="button"
@@ -262,11 +285,168 @@ function MemberCard({
   );
 }
 
+function DrawerStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-3">
+      <p className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">{label}</p>
+      <p className="text-sm font-semibold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function MemberDrawer({
+  member,
+  contact,
+  snooze,
+  ghlLocationId,
+  ghlPortalUrl,
+  copied,
+  pending,
+  onCopy,
+  onLog,
+  onSnooze,
+  onClose,
+}: {
+  member: RetentionMember;
+  contact: ContactInfo | undefined;
+  snooze: SnoozeInfo | undefined;
+  ghlLocationId: string;
+  ghlPortalUrl: string;
+  copied: boolean;
+  pending: boolean;
+  onCopy: (m: RetentionMember) => void;
+  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
+  onSnooze: (m: TodayCallsMember) => void;
+  onClose: () => void;
+}) {
+  const showGhl = Boolean(ghlLocationId && ghlPortalUrl && member.ghlContactId);
+  const isSnoozed = snooze && new Date(snooze.snoozedUntil).getTime() > Date.now();
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-white h-full shadow-xl overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b border-gray-200 px-5 py-4 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-gray-900 truncate">
+              {member.firstName} {member.lastName}
+            </h2>
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              <span
+                className={`text-xs font-bold px-2 py-0.5 rounded border ${HEALTH_STYLE[member.riskBand]}`}
+              >
+                {member.healthScore}/100 · {member.riskBand}
+              </span>
+              <span className="text-xs text-gray-400 uppercase font-semibold tracking-wide">
+                {member.trendCategory}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-gray-400 hover:text-gray-700 text-2xl leading-none flex-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={mindBodyProfileUrl(member.id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition"
+            >
+              Open MindBody profile ↗
+            </a>
+            {showGhl && (
+              <a
+                href={ghlContactDetailUrl(ghlPortalUrl, ghlLocationId, member.ghlContactId!)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
+              >
+                Open in GHL ↗
+              </a>
+            )}
+          </div>
+
+          {member.aiSummary && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                AI summary
+              </p>
+              <p className="text-sm text-gray-800 leading-relaxed">{member.aiSummary}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <DrawerStat label="Visits (30d)" value={`${member.prior30d} → ${member.last30d}`} />
+            <DrawerStat label="Visits (7d)" value={`${member.prior7d} → ${member.last7d}`} />
+            <DrawerStat
+              label="Days since last visit"
+              value={member.daysSinceLastVisit ?? '—'}
+            />
+            <DrawerStat label="Trend" value={trendLabel(member)} />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
+              Contact status
+            </p>
+            {isSnoozed ? (
+              <p className="text-sm text-gray-600">
+                Snoozed until {snoozeDateLabel(snooze!.snoozedUntil)} by {snooze!.snoozedByName}
+              </p>
+            ) : contact ? (
+              <p className="text-sm text-gray-600">
+                Last contacted {daysSinceIso(contact.contactedAt)}d ago by{' '}
+                {contact.contactedByName}
+              </p>
+            ) : (
+              <p className="text-sm text-gray-400">Never contacted</p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-200">
+            {member.mobilePhone && (
+              <button
+                type="button"
+                onClick={() => onCopy(member)}
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition ${
+                  copied
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {copied ? 'Copied' : `Copy ${member.mobilePhone}`}
+              </button>
+            )}
+            <LogButton member={member} pending={pending} onLog={onLog} />
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onSnooze(member)}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+            >
+              Snooze 7d
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RetentionPage() {
   const [data, setData] = useState<RetentionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [riskFilter, setRiskFilter] = useState<Set<RiskBand>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [contactState, setContactState] = useState<ContactStateResponse>({
@@ -274,6 +454,7 @@ export default function RetentionPage() {
     snoozes: {},
   });
   const [actionPending, setActionPending] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -360,14 +541,16 @@ export default function RetentionPage() {
   );
 
   const members = data?.members ?? [];
+  const selectedMember = members.find((m) => m.id === selectedId) ?? null;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return members;
-    return members.filter((m) =>
-      `${m.firstName} ${m.lastName}`.toLowerCase().includes(q),
-    );
-  }, [members, search]);
+    return members.filter((m) => {
+      if (q && !`${m.firstName} ${m.lastName}`.toLowerCase().includes(q)) return false;
+      if (riskFilter.size > 0 && !riskFilter.has(m.riskBand)) return false;
+      return true;
+    });
+  }, [members, search, riskFilter]);
 
   const grouped = useMemo(() => {
     const groups: Record<TrendCategory, RetentionMember[]> = {
@@ -434,7 +617,7 @@ export default function RetentionPage() {
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row gap-3 mb-3">
         <input
           type="search"
           value={search}
@@ -458,6 +641,42 @@ export default function RetentionPage() {
         </Link>
       </div>
 
+      <div className="flex items-center gap-2 flex-wrap mb-6 text-xs">
+        <span className="text-gray-400 uppercase tracking-wider font-semibold mr-1">
+          Risk
+        </span>
+        {(['high', 'medium', 'healthy'] as RiskBand[]).map((r) => (
+          <button
+            key={r}
+            type="button"
+            onClick={() =>
+              setRiskFilter((prev) => {
+                const next = new Set(prev);
+                if (next.has(r)) next.delete(r);
+                else next.add(r);
+                return next;
+              })
+            }
+            className={`px-2.5 py-1 rounded-full border capitalize transition ${
+              riskFilter.has(r)
+                ? HEALTH_STYLE[r]
+                : 'border-gray-200 text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            {r}
+          </button>
+        ))}
+        {riskFilter.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setRiskFilter(new Set())}
+            className="text-gym-accent hover:underline ml-1"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
       {!loading && members.length > 0 && (
         <TodayCalls
           members={filtered}
@@ -474,6 +693,7 @@ export default function RetentionPage() {
           onCopy={copyPhone}
           onLog={handleLog}
           onSnooze={handleSnooze}
+          onSelect={setSelectedId}
         />
       )}
 
@@ -485,20 +705,20 @@ export default function RetentionPage() {
               key={col.key}
               className="bg-gray-50 border border-gray-200 rounded-xl flex flex-col min-h-[40vh] max-h-[78vh]"
             >
-              <header className="px-4 py-3 border-b border-gray-200">
+              <header className={`px-4 py-3 rounded-t-xl ${col.headerBg}`}>
                 <div className="flex items-center justify-between">
                   <h2
-                    className={`text-sm font-semibold uppercase tracking-wider ${col.text}`}
+                    className={`text-sm font-semibold uppercase tracking-wider ${col.headerText}`}
                   >
                     {col.label}
                   </h2>
                   <span
-                    className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.pill}`}
+                    className={`text-xs font-bold px-2 py-0.5 rounded-full ${col.headerPill}`}
                   >
                     {list.length}
                   </span>
                 </div>
-                <p className="text-[11px] text-gray-500 mt-0.5">{col.hint}</p>
+                <p className={`text-[11px] mt-0.5 ${col.headerText} opacity-80`}>{col.hint}</p>
               </header>
               <div className="flex-1 overflow-y-auto p-3 scroll-smooth">
                 {loading ? (
@@ -524,6 +744,7 @@ export default function RetentionPage() {
                       onCopy={copyPhone}
                       onLog={handleLog}
                       onSnooze={handleSnooze}
+                      onSelect={setSelectedId}
                     />
                   ))
                 )}
@@ -532,6 +753,22 @@ export default function RetentionPage() {
           );
         })}
       </div>
+
+      {selectedMember && (
+        <MemberDrawer
+          member={selectedMember}
+          contact={contactState.contacts[selectedMember.id]}
+          snooze={contactState.snoozes[selectedMember.id]}
+          ghlLocationId={data?.ghlLocationId ?? ''}
+          ghlPortalUrl={data?.ghlPortalUrl ?? ''}
+          copied={copiedId === selectedMember.id}
+          pending={actionPending.has(selectedMember.id)}
+          onCopy={copyPhone}
+          onLog={handleLog}
+          onSnooze={handleSnooze}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
 
       {!loading && data?.updatedAt && (
         <p className="text-gray-400 text-xs text-center mt-8">

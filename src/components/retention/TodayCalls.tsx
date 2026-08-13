@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { priorityScore, type Band } from '@/lib/retention/priority';
+import { daysSinceSydney } from '@/lib/retention/dates';
 import LogButton, { type LogOptions } from './LogButton';
 import type {
   ContactInfo,
@@ -28,7 +29,7 @@ const BAND_PILL: Record<Band, string> = {
 };
 
 function daysSince(iso: string): number {
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return daysSinceSydney(iso) ?? 0;
 }
 
 function declinePct(last: number, prior: number): number | null {
@@ -57,6 +58,7 @@ export default function TodayCalls({
   onCopy,
   onLog,
   onSnooze,
+  onSelect,
 }: {
   members: TodayCallsMember[];
   contacts: Record<string, ContactInfo>;
@@ -70,7 +72,9 @@ export default function TodayCalls({
   onCopy: (m: TodayCallsMember) => void;
   onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
   onSnooze: (m: TodayCallsMember) => void;
+  onSelect: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   const top = useMemo(() => {
     const nowMs = Date.now();
     const sevenDaysMs = 7 * 86400000;
@@ -115,7 +119,13 @@ export default function TodayCalls({
 
   return (
     <section className="mb-6 bg-white border border-gray-200 rounded-xl p-4 md:p-5">
-      <header className="flex items-end justify-between gap-3 mb-4">
+      <header
+        role="button"
+        tabIndex={0}
+        onClick={() => setCollapsed((c) => !c)}
+        onKeyDown={(e) => e.key === 'Enter' && setCollapsed((c) => !c)}
+        className={`flex items-end justify-between gap-3 cursor-pointer select-none ${collapsed ? '' : 'mb-4'}`}
+      >
         <div>
           <h2 className="text-lg font-semibold text-gray-900">
             Today&rsquo;s Calls
@@ -125,15 +135,26 @@ export default function TodayCalls({
             {refreshedLabel ? ` · refreshed ${refreshedLabel}` : ''}
           </p>
         </div>
+        <span className="text-xs font-medium text-gray-500 flex items-center gap-1 flex-none">
+          {collapsed ? 'Show' : 'Minimise'}
+          <svg
+            className={`w-3.5 h-3.5 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
       </header>
 
-      {top.length === 0 ? (
+      {collapsed ? null : top.length === 0 ? (
         <p className="text-sm text-gray-500 py-6 text-center">
           Nothing in your inbox today. Either you&rsquo;re caught up, everyone&rsquo;s
           snoozed, or the data hasn&rsquo;t synced. Hit Refresh.
         </p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
           {top.map((m) => {
             const c = contacts[m.id];
             const pct = declinePct(m.last30d, m.prior30d);
@@ -146,14 +167,18 @@ export default function TodayCalls({
             return (
               <div
                 key={m.id}
-                className="border border-gray-200 rounded-lg p-3 bg-gray-50 hover:bg-white hover:border-gray-300 transition"
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelect(m.id)}
+                onKeyDown={(e) => e.key === 'Enter' && onSelect(m.id)}
+                className="border border-gray-200 rounded-lg p-2 bg-gray-50 hover:bg-white hover:border-gray-300 transition cursor-pointer"
               >
-                <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <p className="text-sm font-medium text-gray-900 truncate">
                     {m.firstName} {m.lastName}
                   </p>
                   <span
-                    className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border ${BAND_PILL[m.trendCategory]}`}
+                    className={`text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded border shrink-0 ${BAND_PILL[m.trendCategory]}`}
                   >
                     {m.trendCategory}
                   </span>
@@ -169,15 +194,14 @@ export default function TodayCalls({
                       · -{pct}%
                     </span>
                   )}
+                  {' · '}
+                  {c ? `contacted ${daysSince(c.contactedAt)}d ago` : 'never contacted'}
                 </p>
 
-                <p className="text-[11px] text-gray-500 mb-3">
-                  {c
-                    ? `Last contact: ${daysSince(c.contactedAt)}d ago by ${c.contactedByName}`
-                    : 'Last contact: never'}
-                </p>
-
-                <div className="flex flex-wrap items-center gap-1">
+                <div
+                  className="flex flex-wrap items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   {showGhl && (
                     <a
                       href={ghlContactDetailUrl(

@@ -1,6 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { tallyVisitWindows } from './windows';
 import { computeHealthScore, type RiskBand } from './healthScore';
+import { daysSinceSydney } from './dates';
 
 // Orchestrates the health-score engine over the paid-member audience. Split so
 // the read+score step is side-effect-free (used for the dry-run preview) and
@@ -27,13 +28,6 @@ type PaidRow = {
   total_visit_count: number | null;
 };
 
-function daysSince(iso: string | null): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
-}
-
 // Read-only: computes a health score for every paid, active member.
 export async function computeScoresForPaidMembers(
   supabase = createAdminClient(),
@@ -54,7 +48,7 @@ export async function computeScoresForPaidMembers(
 
   return rows.map((r) => {
     const w = windows.get(r.mindbody_client_id) ?? { last7: 0, prior7: 0, last30: 0, prior30: 0 };
-    const dslv = daysSince(r.last_visit_date);
+    const dslv = daysSinceSydney(r.last_visit_date);
     const { score, band, reasons } = computeHealthScore({
       last7: w.last7,
       prior7: w.prior7,

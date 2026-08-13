@@ -15,6 +15,7 @@ export type BriefTask = {
   detail: string;
   urgency: Urgency;
   source: string;
+  url?: string | null;
 };
 export type Brief = { summary: string; tasks: BriefTask[] };
 
@@ -27,7 +28,7 @@ function systemPrompt(scope: 'personal' | 'business'): string {
 
 From the recent emails (and any gym data provided), produce a concise briefing for Hassan:
 1. "summary": 2-3 plain sentences on what's going on / how things are running right now.
-2. "tasks": a prioritised list of concrete things HE needs to do or that are required FROM him. Each: a short title, a one-line detail, an urgency ("high"|"medium"|"low"), and "source" (the sender or subject it came from).
+2. "tasks": a prioritised list of concrete things HE needs to do or that are required FROM him. Each: a short title, a one-line detail, an urgency ("high"|"medium"|"low"), and "source" — formatted EXACTLY as "{sender name} - {exact email subject}", copying the subject verbatim from the email it came from (used to link the task back to that email).
 
 Rules:
 - Only real, actionable items. IGNORE marketing, newsletters, promotions, receipts that need no action, and automated notifications.

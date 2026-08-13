@@ -16,6 +16,7 @@ type BriefRow = {
   tasks: unknown;
   generated_at: string;
   emails_scanned: number;
+  emails: unknown;
 };
 
 export async function GET() {
@@ -31,7 +32,7 @@ export async function GET() {
   try {
     const { data } = await supabase
       .from('agent_briefs')
-      .select('scope, summary, tasks, generated_at, emails_scanned')
+      .select('scope, summary, tasks, generated_at, emails_scanned, emails')
       .returns<BriefRow[]>();
     if (data) {
       briefs = {

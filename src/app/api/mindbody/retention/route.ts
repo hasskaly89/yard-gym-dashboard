@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { tallyVisitWindows } from '@/lib/retention/windows';
 import { computeHealthScore, type RiskBand } from '@/lib/retention/healthScore';
+import { daysSinceSydney } from '@/lib/retention/dates';
 
 // IMPORTANT — cost note (see memory: project_mindbody_api_billing):
 // MindBody bills $0.002 PER API CALL. This endpoint used to recompute the
@@ -39,6 +40,8 @@ type RetentionMember = {
   reasons: string[];
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
+  totalVisitCount: number;
+  membershipStartDate: string | null;
 };
 
 // Trend-based classification — unchanged thresholds so the board looks the same.
@@ -65,14 +68,8 @@ type PaidMemberRow = {
   ghl_contact_id: string | null;
   last_visit_date: string | null;
   total_visit_count: number | null;
+  membership_start_date: string | null;
 };
-
-function daysSince(iso: string | null): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
-}
 
 // Reads persisted AI summaries. Wrapped so the board still works BEFORE the
 // 007_health_scores migration adds the column (returns an empty map instead of
@@ -101,7 +98,7 @@ export async function GET() {
   const { data: paidRows, error: paidErr } = await supabase
     .from('members')
     .select(
-      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count',
+      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count, membership_start_date',
     )
     .eq('status', 'active')
     .eq('has_paid_membership', true)
@@ -135,7 +132,7 @@ export async function GET() {
     };
     const trend =
       c.prior30 > 0 ? Math.min(c.last30 / c.prior30, 2) : c.last30 > 0 ? 1 : 0;
-    const dslv = daysSince(m.last_visit_date);
+    const dslv = daysSinceSydney(m.last_visit_date);
     const health = computeHealthScore({
       last7: c.last7,
       prior7: c.prior7,
@@ -162,6 +159,8 @@ export async function GET() {
       reasons: health.reasons,
       daysSinceLastVisit: dslv,
       aiSummary: summaries.get(m.mindbody_client_id) ?? null,
+      totalVisitCount: m.total_visit_count ?? 0,
+      membershipStartDate: m.membership_start_date,
     };
   });
 

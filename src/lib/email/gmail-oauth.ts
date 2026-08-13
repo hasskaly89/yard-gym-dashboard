@@ -168,6 +168,7 @@ export async function fetchRecentEmailsOAuth(
       subject: extractHeader(headers, 'Subject') || '(no subject)',
       date: new Date(Number(msg.internalDate)).toISOString(),
       snippet,
+      url: `https://mail.google.com/mail/u/0/#all/${id}`,
     });
   }
 

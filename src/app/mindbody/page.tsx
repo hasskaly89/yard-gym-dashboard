@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import MemberTable from './MemberTable';
 
 type RangeKey = 'week' | 'month' | 'ytd';
 
@@ -85,11 +86,14 @@ function StatCard({
   };
 
   const inner = (
-    <div className="bg-gym-surface border border-gym-border rounded-xl p-6 h-full transition hover:border-gym-text/30 hover:bg-gym-surface/80">
-      <div className="flex items-start justify-between mb-2">
-        <p className="text-gym-muted text-xs uppercase tracking-wider">{label}</p>
+    <div
+      title={sub}
+      className="bg-gym-surface border border-gym-border rounded-xl p-3 h-full transition hover:border-gym-text/30 hover:bg-gym-surface/80"
+    >
+      <div className="flex items-start justify-between gap-1 mb-1">
+        <p className="text-gym-muted text-[10px] uppercase tracking-wider leading-tight">{label}</p>
         {href && (
-          <svg className="w-3.5 h-3.5 text-gym-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-3 h-3 text-gym-muted flex-none mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -99,8 +103,7 @@ function StatCard({
           </svg>
         )}
       </div>
-      <p className={`text-4xl font-bold ${colorMap[color]}`}>{value}</p>
-      {sub && <p className="text-gym-muted text-xs mt-2">{sub}</p>}
+      <p className={`text-2xl font-bold ${colorMap[color]}`}>{value}</p>
     </div>
   );
 
@@ -117,7 +120,7 @@ function StatCard({
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
-    <div className="mb-4 mt-8 first:mt-0">
+    <div className="mb-3 mt-6 first:mt-0">
       <h2 className="text-gym-text text-lg font-semibold">{title}</h2>
       {subtitle && <p className="text-gym-muted text-sm mt-0.5">{subtitle}</p>}
     </div>
@@ -232,7 +235,7 @@ export default function MindBodyPage() {
 
       {/* Section 1: Memberships (snapshot — current state) */}
       <SectionHeader title="Memberships" subtitle="Current membership status across the studio" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
           label="Active Members"
           value={v(counts.active)}
@@ -275,7 +278,7 @@ export default function MindBodyPage() {
         title={`Activity · ${RANGE_LABELS[range]}`}
         subtitle="New sign-ups, new intros, and ended memberships in the selected range"
       />
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <StatCard
           label="New Active Members"
           value={v(ranged.newActive)}
@@ -304,7 +307,7 @@ export default function MindBodyPage() {
         title="Attendance (last 30 days)"
         subtitle="Active members by signed-in classes (excludes creche)"
       />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard
           label="0 Visits"
           value={v(counts.attendance.zero)}
@@ -340,7 +343,7 @@ export default function MindBodyPage() {
         title="Class Milestones"
         subtitle="Lifetime signed-in classes (excludes creche) for active members"
       />
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
           label="50+ Classes"
           value={v(counts.milestones.at50)}
@@ -377,6 +380,9 @@ export default function MindBodyPage() {
           href={MB_REPORTS.members}
         />
       </div>
+
+      <SectionHeader title="Members" subtitle="Filterable, risk-sorted member list" />
+      <MemberTable />
 
       {!loading && data?.updatedAt && (
         <p className="text-gym-muted text-xs text-center mt-8">

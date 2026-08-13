@@ -16,6 +16,7 @@ export type FetchedEmail = {
   subject: string;
   date: string;
   snippet: string;
+  url: string | null;
 };
 
 // Reads the account config for a scope from env. Returns null if not configured
@@ -61,9 +62,13 @@ export async function fetchRecentEmails(
         { uid: true },
       )) {
         let snippet = '';
+        let url: string | null = null;
         try {
           const parsed = await simpleParser(msg.source as Buffer);
           snippet = (parsed.text ?? '').replace(/\s+/g, ' ').trim().slice(0, SNIPPET_MAX);
+          if (parsed.messageId) {
+            url = `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(parsed.messageId.replace(/[<>]/g, ''))}`;
+          }
         } catch {
           snippet = '';
         }
@@ -74,6 +79,7 @@ export async function fetchRecentEmails(
           subject: msg.envelope?.subject ?? '(no subject)',
           date: (msg.envelope?.date ?? new Date()).toISOString(),
           snippet,
+          url,
         });
       }
     } finally {

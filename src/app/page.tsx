@@ -21,6 +21,7 @@ type Brief = {
   emails: EmailItem[] | unknown;
   generated_at: string;
   emails_scanned: number;
+  truncated?: boolean;
 } | null;
 
 type Insights = {
@@ -41,6 +42,13 @@ type DashboardData = {
 type MetaAdsSummary = {
   tokenPending: boolean;
   totals: { spend: number; leads: number };
+} | null;
+
+type GhlSummary = {
+  mock?: boolean;
+  totalUnread?: number;
+  contacts: { total: number; newThisWeek: number };
+  opportunities: { total: number };
 } | null;
 
 const fmtAud = (n: number) =>
@@ -77,6 +85,7 @@ function activeTaskCount(brief: Brief): number {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [metaAds, setMetaAds] = useState<MetaAdsSummary>(null);
+  const [ghl, setGhl] = useState<GhlSummary>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -89,6 +98,11 @@ export default function DashboardPage() {
     fetch('/api/meta-ads?range=last_30d')
       .then((r) => r.json())
       .then((d: MetaAdsSummary) => setMetaAds(d))
+      .catch(() => {});
+
+    fetch('/api/gohighlevel')
+      .then((r) => r.json())
+      .then((d: GhlSummary) => setGhl(d))
       .catch(() => {});
   }, []);
 
@@ -110,12 +124,12 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
         <div className="space-y-6">
-          <DeskTiles data={data} metaAds={metaAds} />
+          <DeskTiles data={data} metaAds={metaAds} ghl={ghl} />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             <div className="lg:col-span-2">
               <InboxCard data={data} />
             </div>
-            <MindBodyRetentionSidebar insights={data?.insights ?? null} />
+            <MindBodyRetentionSidebar insights={data?.insights ?? null} ghl={ghl} />
           </div>
         </div>
       )}
@@ -123,10 +137,19 @@ export default function DashboardPage() {
   );
 }
 
-function DeskTiles({ data, metaAds }: { data: DashboardData | null; metaAds: MetaAdsSummary }) {
+function DeskTiles({
+  data,
+  metaAds,
+  ghl,
+}: {
+  data: DashboardData | null;
+  metaAds: MetaAdsSummary;
+  ghl: GhlSummary;
+}) {
   const inboxCount = activeTaskCount(data?.briefs.business ?? null) + activeTaskCount(data?.briefs.personal ?? null);
   const atRiskCount = data?.insights ? data.insights.risk.high + data.insights.risk.medium : 0;
   const marketingConnected = !!metaAds && !metaAds.tokenPending;
+  const ghlConnected = !!ghl && !ghl.mock;
 
   return (
     <div>
@@ -140,7 +163,12 @@ function DeskTiles({ data, metaAds }: { data: DashboardData | null; metaAds: Met
           sub={marketingConnected ? `leads · ${fmtAud(metaAds!.totals.spend)} spent` : 'not connected'}
           href="/meta-ads"
         />
-        <DeskTile label="Leads" value={null} sub="not synced" href="/gohighlevel" />
+        <DeskTile
+          label="Leads"
+          value={ghlConnected ? ghl!.contacts.newThisWeek : null}
+          sub={ghlConnected ? `new this week · ${ghl!.totalUnread ?? 0} unread` : 'not synced'}
+          href="/gohighlevel"
+        />
       </div>
     </div>
   );
@@ -249,6 +277,16 @@ function InboxCard({ data }: { data: DashboardData | null }) {
           </div>
         ) : (
           <div className="space-y-4">
+            {brief.truncated && (
+              <div className="border border-amber-300 bg-amber-50 rounded-xl px-4 py-3">
+                <p className="text-sm font-semibold text-amber-900">This list may be incomplete</p>
+                <p className="text-xs text-amber-800 mt-0.5">
+                  The agent had more to report than it could return in one pass, so lower-priority
+                  items may be missing. {brief.emails_scanned} emails were scanned — check the inbox
+                  directly before treating this as the full picture.
+                </p>
+              </div>
+            )}
             {brief.summary && (
               <div className="bg-gradient-to-br from-gray-50 to-white border border-gym-border rounded-xl p-4">
                 <p className="text-xs font-semibold uppercase tracking-wider text-gym-muted mb-1.5">
@@ -497,7 +535,7 @@ function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
   );
 }
 
-function MindBodyRetentionSidebar({ insights }: { insights: Insights }) {
+function MindBodyRetentionSidebar({ insights, ghl }: { insights: Insights; ghl: GhlSummary }) {
   if (!insights) {
     return (
       <div className="bg-white border border-gym-border rounded-xl p-5 text-sm text-gym-muted">
@@ -518,10 +556,18 @@ function MindBodyRetentionSidebar({ insights }: { insights: Insights }) {
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <div className="border border-dashed border-gray-300 rounded-lg p-3 text-center">
-            <p className="text-xs text-gray-400">New leads</p>
-            <p className="text-[10px] text-gray-400 mt-0.5">Not synced yet</p>
-          </div>
+          {ghl && !ghl.mock ? (
+            <div className="border border-gym-border rounded-lg p-3 text-center">
+              <p className="text-lg font-bold text-gray-900">{ghl.contacts.newThisWeek}</p>
+              <p className="text-xs text-gym-muted">New leads</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Last 7 days</p>
+            </div>
+          ) : (
+            <div className="border border-dashed border-gray-300 rounded-lg p-3 text-center">
+              <p className="text-xs text-gray-400">New leads</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">Not synced yet</p>
+            </div>
+          )}
           <div className="border border-dashed border-gray-300 rounded-lg p-3 text-center">
             <p className="text-xs text-gray-400">Missed payments</p>
             <p className="text-[10px] text-gray-400 mt-0.5">Not synced yet</p>

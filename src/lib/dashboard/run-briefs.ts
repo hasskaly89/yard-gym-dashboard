@@ -1,7 +1,22 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { emailAccountFor, fetchRecentEmails, type FetchedEmail } from '@/lib/email/imap';
-import { fetchRecentEmailsOAuth, isOAuthConnected } from '@/lib/email/gmail-oauth';
-import { generateBrief, type BriefTask } from '@/lib/ai/brief';
+import {
+  emailAccountFor,
+  fetchRecentEmails,
+  findRepliedMessageIds,
+  type FetchedEmail,
+} from '@/lib/email/imap';
+import {
+  fetchRecentEmailsOAuth,
+  findRepliedMessageIdsOAuth,
+  isOAuthConnected,
+} from '@/lib/email/gmail-oauth';
+import { generateBrief, type BriefTask, type AtRiskMember } from '@/lib/ai/brief';
+import {
+  buildVipList,
+  addGhlOpportunityContacts,
+  replyCheckCandidates,
+  scoreEmails,
+} from '@/lib/ai/email-signals';
 import { computeMindBodyInsights } from './insights';
 
 export type BriefRunResult = {
@@ -71,15 +86,36 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
   const results: BriefRunResult[] = [];
 
   // Gym context so the BUSINESS brief factors in how the gym is actually doing.
+  // atRisk goes through as STRUCTURED data (not just the summary string) so a
+  // member about to churn can compete fairly with inbox items for the top spot.
   let gymData: string | undefined;
+  let atRisk: AtRiskMember[] | undefined;
   try {
     const ins = await computeMindBodyInsights();
     gymData =
       `Active paid members: ${ins.activeMembers}. Retention risk: ${ins.risk.high} high, ${ins.risk.medium} medium, ${ins.risk.healthy} healthy. ` +
       `Sessions last 7 days: ${ins.sessionsLast7} (previous week: ${ins.sessionsPrior7}).`;
+    atRisk = ins.atRisk.map((m) => ({ name: m.name, score: m.score, summary: m.summary }));
   } catch {
     // insights optional
   }
+
+  // Hassan's own addresses, so "addressed to me" can be told from "CC'd" —
+  // and so he never lands on his own VIP list (both mailboxes are dashboard
+  // accounts, which is where the "staff" VIPs come from).
+  const ownerAddresses = new Set(
+    [process.env.GMAIL_PERSONAL_USER, process.env.GMAIL_BUSINESS_USER]
+      .filter((a): a is string => !!a)
+      .map((a) => a.toLowerCase()),
+  );
+
+  // VIP list — staff, high-risk members, CRM contacts mid-deal. Built once and
+  // reused for both scopes. GHL is rate-limited and non-critical, so a failure
+  // there just means a slightly thinner list, never a failed brief.
+  const vips = await buildVipList(ownerAddresses);
+  await addGhlOpportunityContacts(vips).catch((e) => {
+    console.error('[briefs] GHL VIP enrichment failed:', e);
+  });
 
   for (const scope of ['personal', 'business'] as const) {
     const emails = await fetchEmailsForScope(scope);
@@ -88,28 +124,65 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
       continue;
     }
     try {
+      // Which of these has he already answered? Only direct-question candidates
+      // are looked up, so this costs a handful of calls, not one per email.
+      const candidates = replyCheckCandidates(emails, ownerAddresses);
+      let repliedIds = new Set<string>();
+      try {
+        if (scope === 'business') {
+          repliedIds = await findRepliedMessageIdsOAuth('business', candidates, ownerAddresses);
+        } else if (candidates.length > 0) {
+          const acct = emailAccountFor('personal');
+          if (acct) repliedIds = await findRepliedMessageIds(acct, { sinceDays: 14 });
+        }
+      } catch (e) {
+        // Unknown ≠ answered: leave the set empty so nothing is wrongly silenced.
+        console.error(`[briefs] reply lookup failed for ${scope}:`, e);
+      }
+
+      const scored = scoreEmails(emails, vips, ownerAddresses, repliedIds);
       const brief = await generateBrief(
         scope,
-        emails,
-        scope === 'business' ? { gymData } : undefined,
+        scored,
+        scope === 'business' ? { gymData, atRisk } : undefined,
       );
       if (!brief) {
-        results.push({ scope, ok: false, emails: emails.length, tasks: 0, error: 'no brief (AI key?)' });
+        // Was "no brief (AI key?)" — misleading, since by far the commonest
+        // cause is an unparseable/truncated model response, not a bad key.
+        results.push({
+          scope,
+          ok: false,
+          emails: emails.length,
+          tasks: 0,
+          error: 'brief generation returned nothing (missing ANTHROPIC_API_KEY, or unparseable model response)',
+        });
         continue;
       }
       const now = new Date().toISOString();
-      await supabase.from('agent_briefs').upsert(
-        {
-          scope,
-          summary: brief.summary,
-          tasks: linkTasksToEmails(brief.tasks, emails),
-          emails_scanned: emails.length,
-          emails: emails.slice(0, 20),
-          generated_at: now,
-          updated_at: now,
-        },
-        { onConflict: 'scope' },
-      );
+      const row = {
+        scope,
+        summary: brief.summary,
+        tasks: linkTasksToEmails(brief.tasks, emails),
+        emails_scanned: emails.length,
+        emails: emails.slice(0, 20),
+        generated_at: now,
+        updated_at: now,
+      };
+
+      // `truncated` needs migration 013. If that hasn't been applied yet the
+      // insert would fail outright and save NOTHING, so fall back to writing
+      // the brief without the flag rather than losing it. Deploy order then
+      // doesn't matter; the warning banner just stays dark until the migration
+      // lands.
+      let { error } = await supabase
+        .from('agent_briefs')
+        .upsert({ ...row, truncated: brief.truncated ?? false }, { onConflict: 'scope' });
+      if (error?.code === '42703') {
+        console.warn('[briefs] agent_briefs.truncated missing — apply migration 013; saving without it');
+        ({ error } = await supabase.from('agent_briefs').upsert(row, { onConflict: 'scope' }));
+      }
+      if (error) throw new Error(error.message);
+
       results.push({ scope, ok: true, emails: emails.length, tasks: brief.tasks.length });
     } catch (e) {
       results.push({ scope, ok: false, emails: 0, tasks: 0, error: (e as Error).message });

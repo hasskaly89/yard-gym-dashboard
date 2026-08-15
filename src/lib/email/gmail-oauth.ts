@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import type { FetchedEmail } from './imap';
+import { normaliseMessageId, type FetchedEmail } from './imap';
 
 // Business inbox access via Google OAuth. The Yard's Workspace admin disables
 // Gmail app passwords, so this scope can't use the IMAP + app-password path
@@ -19,6 +19,8 @@ type GmailMessagePart = {
   parts?: GmailMessagePart[];
 };
 type GmailMessage = {
+  id?: string;
+  threadId?: string;
   internalDate: string;
   snippet?: string;
   payload?: GmailMessagePart & { headers?: GmailHeader[] };
@@ -163,14 +165,81 @@ export async function fetchRecentEmailsOAuth(
     const snippet =
       extractPlainText(msg.payload).replace(/\s+/g, ' ').trim().slice(0, SNIPPET_MAX) ||
       (msg.snippet ?? '');
+    // "Name <addr@x.com>, other@y.com" → ["addr@x.com", "other@y.com"]
+    const addrList = (header: string): string[] =>
+      (extractHeader(headers, header).match(/[\w.+-]+@[\w.-]+\.\w+/g) ?? []).map((a) =>
+        a.toLowerCase(),
+      );
     out.push({
       from: extractHeader(headers, 'From'),
       subject: extractHeader(headers, 'Subject') || '(no subject)',
       date: new Date(Number(msg.internalDate)).toISOString(),
       snippet,
       url: `https://mail.google.com/mail/u/0/#all/${id}`,
+      to: addrList('To'),
+      cc: addrList('Cc'),
+      messageId: normaliseMessageId(extractHeader(headers, 'Message-ID')),
+      threadId: msg.threadId,
+      isBulk: extractHeader(headers, 'List-Unsubscribe') !== '',
     });
   }
 
   return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * Of the given emails, which has Hassan already answered?
+ *
+ * Checks each email's thread for a later message sent by one of his own
+ * addresses. Deliberately takes only the CANDIDATES worth checking (the caller
+ * passes the handful that already look like direct questions) rather than every
+ * fetched email, so this stays a few extra calls per run instead of one per
+ * message. Returns the set of replied-to Message-IDs.
+ */
+export async function findRepliedMessageIdsOAuth(
+  scope: OAuthScope,
+  candidates: FetchedEmail[],
+  ownerAddresses: Set<string>,
+): Promise<Set<string>> {
+  const replied = new Set<string>();
+  if (candidates.length === 0) return replied;
+
+  const accessToken = await getAccessToken(scope);
+  if (!accessToken) return replied;
+  const authHeader = { Authorization: `Bearer ${accessToken}` };
+
+  // Unique threads only — several candidates can share one thread.
+  const byThread = new Map<string, FetchedEmail[]>();
+  for (const e of candidates) {
+    if (!e.threadId || !e.messageId) continue;
+    const list = byThread.get(e.threadId) ?? [];
+    list.push(e);
+    byThread.set(e.threadId, list);
+  }
+
+  for (const [threadId, mails] of byThread) {
+    try {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=metadata&metadataHeaders=From`,
+        { headers: authHeader },
+      );
+      if (!res.ok) continue;
+      const thread: { messages?: GmailMessage[] } = await res.json();
+
+      for (const mail of mails) {
+        const sentAt = new Date(mail.date).getTime();
+        const answered = (thread.messages ?? []).some((m) => {
+          const from = extractHeader(m.payload?.headers ?? [], 'From').toLowerCase();
+          const fromOwner = [...ownerAddresses].some((a) => from.includes(a));
+          return fromOwner && Number(m.internalDate) > sentAt;
+        });
+        if (answered) replied.add(mail.messageId!);
+      }
+    } catch {
+      // A thread lookup failing just means we don't know — leave it unflagged
+      // rather than guessing it was answered.
+    }
+  }
+
+  return replied;
 }

@@ -28,20 +28,57 @@ async function v2Fetch(path: string) {
   return res.json();
 }
 
+// Count contacts added in the last `days` days. v1 returns contacts newest
+// first, so we page until we cross the cutoff. Capped at MAX_PAGES so a quiet
+// location can't walk the whole 3k-contact list looking for a boundary.
+const CONTACT_PAGE = 100;
+const MAX_PAGES = 3;
+
+type ContactRow = { id: string; dateAdded?: string };
+
+async function countNewContacts(days: number): Promise<number> {
+  const cutoff = Date.now() - days * 86400000;
+  let count = 0;
+  let cursor = '';
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await v1Fetch(
+      `/contacts/?locationId=${LOCATION_ID}&limit=${CONTACT_PAGE}${cursor}`,
+    );
+    const rows: ContactRow[] = data.contacts ?? [];
+    if (rows.length === 0) return count;
+
+    for (const c of rows) {
+      if (!c.dateAdded) continue;
+      if (new Date(c.dateAdded).getTime() < cutoff) return count;
+      count++;
+    }
+
+    // Older than the cutoff never appeared in this page — keep paging.
+    const meta = data.meta ?? {};
+    if (!meta.startAfter || !meta.startAfterId) return count;
+    cursor = `&startAfter=${meta.startAfter}&startAfterId=${meta.startAfterId}`;
+  }
+
+  return count;
+}
+
 export async function GET() {
   if (!API_KEY || !LOCATION_ID) {
     return NextResponse.json({ mock: true });
   }
 
   // Fetch contacts & pipelines via v1 (known working)
-  const [contactsData, pipelinesData] = await Promise.allSettled([
+  const [contactsData, pipelinesData, newThisWeekData] = await Promise.allSettled([
     v1Fetch(`/contacts/?locationId=${LOCATION_ID}&limit=1`),
     v1Fetch(`/pipelines/?locationId=${LOCATION_ID}`),
+    countNewContacts(7),
   ]);
 
-  const contacts = contactsData.status === 'fulfilled'
-    ? { total: contactsData.value.meta?.total ?? 0 }
-    : { total: 0 };
+  const contacts = {
+    total: contactsData.status === 'fulfilled' ? contactsData.value.meta?.total ?? 0 : 0,
+    newThisWeek: newThisWeekData.status === 'fulfilled' ? newThisWeekData.value : 0,
+  };
 
   type Stage = { id: string; name: string };
   type Pipeline = { id: string; name: string; stages: Stage[] };
@@ -49,19 +86,22 @@ export async function GET() {
     ? (pipelinesData.value.pipelines ?? [])
     : [];
 
-  // Fetch opportunity counts per pipeline via v1
-  const oppResults = await Promise.allSettled(
-    pipelines.slice(0, 4).map(p =>
-      v1Fetch(`/opportunities/search?pipelineId=${p.id}&locationId=${LOCATION_ID}&limit=1`)
-        .then(d => ({ name: p.name, count: d.meta?.total ?? (d.opportunities?.length ?? 0) }))
-        .catch(() => ({ name: p.name, count: 0 }))
-    )
+  // Open opportunity counts per pipeline. NOTE: v1 /opportunities/search is
+  // retired (404s on every call), which silently zeroed every pipeline count —
+  // v2 /opportunities/search is the live equivalent and needs the Private
+  // Integration Token, so counts stay at 0 if only the v1 key is configured.
+  const oppResults = await Promise.all(
+    pipelines.map(p =>
+      (PRIVATE_TOKEN
+        ? v2Fetch(
+            `/opportunities/search?location_id=${LOCATION_ID}&pipeline_id=${p.id}&status=open&limit=1`,
+          ).then(d => ({ name: p.name, count: d.meta?.total ?? 0 }))
+        : Promise.resolve({ name: p.name, count: 0 })
+      ).catch(() => ({ name: p.name, count: 0 })),
+    ),
   );
 
-  const stages = oppResults
-    .filter(r => r.status === 'fulfilled')
-    .map(r => (r as PromiseFulfilledResult<{ name: string; count: number }>).value);
-
+  const stages = oppResults;
   const totalOpps = stages.reduce((sum, s) => sum + s.count, 0);
 
   // Fetch real unread conversations via v2 Private Integration

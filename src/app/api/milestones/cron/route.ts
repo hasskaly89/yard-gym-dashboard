@@ -8,6 +8,25 @@ import { isDue, markRun } from '@/lib/mindbody/sync-state'
 import { runRetentionScoring } from '@/lib/retention/run-scoring'
 import { runBriefs } from '@/lib/dashboard/run-briefs'
 
+// ⚠️ DO NOT RUN THIS ROUTE LOCALLY. It is NOT read-only — it sends real
+// messages to real members via triggerMilestone() → GHL webhooks (birthday,
+// anniversary, inactivity), and there is NO separate dev database: local
+// .env.local and Vercel production point at the SAME Supabase project.
+//
+// So a local "just testing" run does two harmful things at once:
+//   1. Members actually receive the messages.
+//   2. It writes the `triggered_at` dedupe row this route checks, so the real
+//      21:00 UTC production run then SKIPS those members entirely.
+// The second one is the dangerous half — it fails silently and looks like
+// nothing happened.
+//
+// To test brief generation, use /api/dashboard/brief-cron instead: it calls
+// runBriefs() only and sends nothing.
+//
+// TODO: env-scope the dedupe (add an `env` column) so a non-production run
+// cannot consume production's daily slot, and route all outbound through a
+// single dispatch() gated on `process.env.VERCEL_ENV === 'production'`.
+//
 // Cron does: (weekly) refresh membership flags → (nightly) incremental visit
 // sync (paid members only) → birthday/anniversary/inactivity checks.
 //
@@ -130,6 +149,9 @@ export async function GET(req: NextRequest) {
     if (data.length < PAGE) break
   }
 
+  // ⚠️ Everything below SENDS TO REAL MEMBERS (see the warning at the top of
+  // this file). `milestone_log` is shared with production, so running this
+  // outside prod both messages people and makes the real run skip them.
   for (const member of members) {
     try {
       // 1. Birthday check

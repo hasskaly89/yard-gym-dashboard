@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { PERIODS, type PeriodKey } from '@/lib/periods';
 
 type Urgency = 'high' | 'medium' | 'low';
 type Task = {
@@ -27,8 +28,12 @@ type Brief = {
 type Insights = {
   activeMembers: number;
   risk: { high: number; medium: number; healthy: number };
-  sessionsLast7: number;
-  sessionsPrior7: number;
+  sessionsThisWeek: number;
+  sessionsLastWeekToDate: number;
+  sessionsLastWeekFull: number;
+  weekStart: string;
+  declined?: number;
+  suspended?: number;
   atRisk: Array<{ id: string; name: string; score: number | null; summary: string | null }>;
   updatedAt: string | null;
 } | null;
@@ -124,6 +129,7 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
         <div className="space-y-6">
+          <BusinessBar />
           <DeskTiles data={data} metaAds={metaAds} ghl={ghl} />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
             <div className="lg:col-span-2">
@@ -133,6 +139,151 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+type BusinessSummary = {
+  period: { key: string; label: string; start: string; end: string; inProgress: boolean };
+  revenue: { total: number; transactions: number; compare: number | null };
+  visits: {
+    signedIn: number;
+    booked: number;
+    capacity: number;
+    classes: number;
+    utilisation: number | null;
+    compare: number | null;
+  };
+  leads: { created: number; won: number; open: number; compare: number | null } | null;
+  costCalls: number;
+  errors: string[];
+} | null;
+
+// Money, visits and leads on one calendar, for one chosen period. Weeks run
+// Monday–Sunday to match the MindBody Classes report.
+function BusinessBar() {
+  const [period, setPeriod] = useState<PeriodKey>('this-week');
+  const [data, setData] = useState<BusinessSummary>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    fetch(`/api/business?period=${period}`)
+      .then((r) => r.json())
+      .then((d: BusinessSummary) => {
+        if (live) setData(d);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [period]);
+
+  const range = data
+    ? `${new Date(data.period.start).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' })} – ${new Date(
+        new Date(data.period.end).getTime() - 1,
+      ).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' })}`
+    : '';
+
+  return (
+    <div className="bg-white border border-gym-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-gym-border flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border border-gym-border p-0.5 bg-gray-50 flex-wrap">
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setPeriod(p.key)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
+                period === p.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {data && (
+          <span className="text-[11px] text-gym-muted">
+            {range}
+            {data.period.inProgress && ' · in progress'}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gym-border">
+        <Metric
+          label="Money in"
+          value={data ? `$${data.revenue.total.toLocaleString('en-AU', { maximumFractionDigits: 0 })}` : null}
+          sub={data ? `${data.revenue.transactions} transactions` : ''}
+          delta={pctDelta(data?.revenue.total, data?.revenue.compare)}
+          loading={loading}
+        />
+        <Metric
+          label="Visits"
+          value={data ? data.visits.signedIn.toLocaleString('en-AU') : null}
+          sub={
+            data
+              ? `${data.visits.classes} classes · ${data.visits.utilisation ?? '—'}% full`
+              : ''
+          }
+          delta={pctDelta(data?.visits.signedIn, data?.visits.compare)}
+          loading={loading}
+        />
+        <Metric
+          label="New leads"
+          value={data?.leads ? data.leads.created.toLocaleString('en-AU') : null}
+          sub={data?.leads ? `${data.leads.won} won · ${data.leads.open} open` : 'CRM not connected'}
+          delta={pctDelta(data?.leads?.created, data?.leads?.compare)}
+          loading={loading}
+        />
+      </div>
+
+      {data && data.errors.length > 0 && (
+        <p className="px-5 py-2 text-[11px] text-amber-700 bg-amber-50 border-t border-amber-200">
+          Some figures unavailable: {data.errors.join('; ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function pctDelta(now?: number, before?: number | null): number | null {
+  if (now === undefined || before === null || before === undefined || before === 0) return null;
+  return Math.round(((now - before) / before) * 100);
+}
+
+function Metric({
+  label,
+  value,
+  sub,
+  delta,
+  loading,
+}: {
+  label: string;
+  value: string | null;
+  sub: string;
+  delta: number | null;
+  loading: boolean;
+}) {
+  return (
+    <div className="p-5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-gym-muted">{label}</p>
+      <div className="flex items-baseline gap-2 mt-1">
+        <p className="text-3xl font-bold text-gray-900 tabular-nums">
+          {loading ? <span className="text-gray-300">—</span> : (value ?? '—')}
+        </p>
+        {!loading && delta !== null && (
+          <span className={`text-xs font-semibold ${delta < 0 ? 'text-amber-600' : 'text-emerald-700'}`}>
+            {delta > 0 ? '+' : ''}
+            {delta}%
+          </span>
+        )}
+      </div>
+      <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>
     </div>
   );
 }
@@ -550,9 +701,20 @@ function MindBodyRetentionSidebar({ insights, ghl }: { insights: Insights; ghl: 
         <h2 className="text-sm font-semibold text-gray-900">MindBody & Retention</h2>
       </div>
       <div className="p-5 space-y-4">
-        <div className="grid grid-cols-2 gap-3 text-center">
-          <Stat label="Active members" value={insights.activeMembers} />
+        {/* Active / declined / suspended are three different problems, so they
+            stay three numbers — a suspended member needs a different call than
+            a failed payment. */}
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <Stat label="Active" value={insights.activeMembers} />
+          <Stat label="Declined" value={insights.declined ?? null} tone="warn" />
+          <Stat label="Suspended" value={insights.suspended ?? null} />
+        </div>
+
+        <AttendanceWeek insights={insights} />
+
+        <div className="grid grid-cols-2 gap-3 text-center border-t border-gym-border pt-4">
           <Stat label="At risk" value={atRiskCount} tone="warn" />
+          <Stat label="Healthy" value={insights.risk.healthy} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -612,11 +774,54 @@ function MindBodyRetentionSidebar({ insights, ghl }: { insights: Insights; ghl: 
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone?: 'warn' }) {
+function Stat({ label, value, tone }: { label: string; value: number | null; tone?: 'warn' }) {
   return (
     <div>
-      <p className={`text-2xl font-bold ${tone === 'warn' ? 'text-amber-600' : 'text-gray-900'}`}>{value}</p>
+      {value === null ? (
+        <p className="text-2xl font-bold text-gray-300">—</p>
+      ) : (
+        <p className={`text-2xl font-bold ${tone === 'warn' && value > 0 ? 'text-amber-600' : 'text-gray-900'}`}>
+          {value}
+        </p>
+      )}
       <p className="text-[11px] text-gym-muted uppercase tracking-wider">{label}</p>
+    </div>
+  );
+}
+
+// Attendance on the Monday-start week Hassan reads off MindBody. The headline
+// is this week so far; the comparison is the SAME elapsed slice of last week,
+// never the full week, so a Tuesday can't read as a collapse.
+function AttendanceWeek({ insights }: { insights: NonNullable<Insights> }) {
+  const { sessionsThisWeek: now, sessionsLastWeekToDate: then, sessionsLastWeekFull: full } = insights;
+  const delta = then > 0 ? Math.round(((now - then) / then) * 100) : null;
+  const weekOf = new Date(insights.weekStart).toLocaleDateString('en-AU', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Australia/Sydney',
+  });
+
+  return (
+    <div className="border border-gym-border rounded-lg p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gym-muted">
+          Attendance · week of {weekOf}
+        </p>
+        {delta !== null && (
+          <span
+            className={`text-[11px] font-semibold ${
+              delta < 0 ? 'text-amber-600' : 'text-emerald-700'
+            }`}
+          >
+            {delta > 0 ? '+' : ''}
+            {delta}%
+          </span>
+        )}
+      </div>
+      <p className="text-2xl font-bold text-gray-900 mt-0.5">{now}</p>
+      <p className="text-[11px] text-gray-400 mt-0.5">
+        vs {then} at the same point last week · {full} last week total
+      </p>
     </div>
   );
 }

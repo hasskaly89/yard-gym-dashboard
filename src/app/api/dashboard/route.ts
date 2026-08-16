@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@/lib/supabase/server';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { emailAccountFor } from '@/lib/email/imap';
 import { isOAuthConnected } from '@/lib/email/gmail-oauth';
@@ -22,6 +23,15 @@ type BriefRow = {
 };
 
 export async function GET() {
+  // The proxy's matcher excludes /api, so this route is NOT covered by the
+  // page auth gate — without this check it hands member names, risk bands, AI
+  // notes and both brief bodies to anyone who knows the URL.
+  const auth = await createClient();
+  const { data: userData } = await auth.auth.getUser();
+  if (!userData.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const supabase = createAdminClient();
 
   const insights = await computeMindBodyInsights().catch(() => null);

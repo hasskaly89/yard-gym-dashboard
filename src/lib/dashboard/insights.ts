@@ -7,8 +7,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
 export type MindBodyInsights = {
   activeMembers: number;
   risk: { high: number; medium: number; healthy: number };
-  sessionsLast7: number;
-  sessionsPrior7: number;
+  /** Monday-start week, matching the MindBody Classes report. */
+  sessionsThisWeek: number;
+  /** Same elapsed slice of last week — the like-for-like comparison. */
+  sessionsLastWeekToDate: number;
+  /** Last week complete, for reference. */
+  sessionsLastWeekFull: number;
+  weekStart: string;
   atRisk: Array<{
     id: string;
     name: string;
@@ -60,21 +65,30 @@ export async function computeMindBodyInsights(): Promise<MindBodyInsights> {
       summary: m.ai_summary,
     }));
 
-  // Sessions this week vs last week (attendance pulse) from member_visits.
-  const now = Date.now();
-  const wk = 7 * 86400000;
-  const last7Iso = new Date(now - wk).toISOString();
-  const prior7Iso = new Date(now - 2 * wk).toISOString();
+  // Attendance runs on a MONDAY-START week, matching the MindBody Classes
+  // report Hassan reads the real numbers off. It used to be a rolling 7 days,
+  // which silently disagreed with MindBody even when the data was perfect.
+  const { weekStart, lastWeekStart, sameElapsedLastWeek } = sydneyWeekBounds();
 
-  const { count: sessionsLast7 } = await supabase
-    .from('member_visits')
-    .select('visit_at', { count: 'exact', head: true })
-    .gte('visit_at', last7Iso);
-  const { count: sessionsPrior7Raw } = await supabase
-    .from('member_visits')
-    .select('visit_at', { count: 'exact', head: true })
-    .gte('visit_at', prior7Iso)
-    .lt('visit_at', last7Iso);
+  const [{ count: thisWeek }, { count: lastWeekFull }, { count: lastWeekToDate }] =
+    await Promise.all([
+      supabase
+        .from('member_visits')
+        .select('visit_at', { count: 'exact', head: true })
+        .gte('visit_at', weekStart),
+      supabase
+        .from('member_visits')
+        .select('visit_at', { count: 'exact', head: true })
+        .gte('visit_at', lastWeekStart)
+        .lt('visit_at', weekStart),
+      // Same elapsed slice of last week — comparing a part-week against a full
+      // one is what made a normal Tuesday look like a 30% collapse.
+      supabase
+        .from('member_visits')
+        .select('visit_at', { count: 'exact', head: true })
+        .gte('visit_at', lastWeekStart)
+        .lt('visit_at', sameElapsedLastWeek),
+    ]);
 
   const updatedAt =
     rows.map((r) => r.score_updated_at).filter(Boolean).sort().at(-1) ?? null;
@@ -82,9 +96,44 @@ export async function computeMindBodyInsights(): Promise<MindBodyInsights> {
   return {
     activeMembers: rows.length,
     risk,
-    sessionsLast7: sessionsLast7 ?? 0,
-    sessionsPrior7: sessionsPrior7Raw ?? 0,
+    sessionsThisWeek: thisWeek ?? 0,
+    sessionsLastWeekToDate: lastWeekToDate ?? 0,
+    sessionsLastWeekFull: lastWeekFull ?? 0,
+    weekStart,
     atRisk,
     updatedAt,
+  };
+}
+
+// Monday 00:00 in Australia/Sydney, expressed as UTC ISO strings. Sydney is
+// UTC+10 (AEST) or UTC+11 (AEDT), so the offset is derived rather than assumed
+// — hardcoding +10 would shift the week boundary by an hour over summer.
+function sydneyWeekBounds(): {
+  weekStart: string;
+  lastWeekStart: string;
+  sameElapsedLastWeek: string;
+} {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-AU', {
+    timeZone: 'Australia/Sydney',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '0';
+
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dayIdx = Math.max(0, days.indexOf(get('weekday')));
+  const msIntoDay =
+    Number(get('hour')) * 3600000 + Number(get('minute')) * 60000 + Number(get('second')) * 1000;
+  const msIntoWeek = dayIdx * 86400000 + msIntoDay;
+
+  const weekStartMs = now.getTime() - msIntoWeek;
+  return {
+    weekStart: new Date(weekStartMs).toISOString(),
+    lastWeekStart: new Date(weekStartMs - 7 * 86400000).toISOString(),
+    sameElapsedLastWeek: new Date(weekStartMs - 7 * 86400000 + msIntoWeek).toISOString(),
   };
 }

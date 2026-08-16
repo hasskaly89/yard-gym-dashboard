@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
+import { createClient } from "@/lib/supabase/server";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export async function POST(req: NextRequest) {
+  // /api is excluded from the proxy's matcher, so this send path was reachable
+  // by anyone with the URL — an open relay through the gym's own SMTP account.
+  // Staff submit this from the gated /timesheets page, so a session is expected.
+  const auth = await createClient();
+  const { data: userData } = await auth.auth.getUser();
+  if (!userData.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { staffName, abn, hourlyRate, hours, weekEnding, totalHours, totalPay } = body;
 

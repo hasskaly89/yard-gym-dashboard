@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@/lib/supabase/server';
 import { getAnthropic } from '@/lib/ai/client';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { DASHBOARD_AI_MODEL } from '@/lib/ai/brief';
@@ -18,6 +19,15 @@ function buildContext(briefs: Record<string, unknown>, insights: unknown): strin
 }
 
 export async function POST(req: Request) {
+  // /api is excluded from the proxy's matcher, so without this anyone with the
+  // URL could spend the Anthropic budget and read the brief data fed in as
+  // context below.
+  const auth = await createClient();
+  const { data: userData } = await auth.auth.getUser();
+  if (!userData.user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const body = await req.json().catch(() => null);
   const message = body?.message;
   const history: ChatMessage[] = Array.isArray(body?.history) ? body.history : [];

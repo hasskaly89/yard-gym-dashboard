@@ -17,6 +17,12 @@ export type BriefTask = {
   urgency: Urgency;
   source: string;
   url?: string | null;
+  // Why this is urgent, carried from the source email's deterministic signals so
+  // the dashboard can SHOW the reason instead of just a colour. Without these a
+  // legal letter and a newsletter render identically.
+  flags?: string[];
+  deadline?: string | null;
+  vip?: string | null;
 };
 export type Brief = {
   summary: string;

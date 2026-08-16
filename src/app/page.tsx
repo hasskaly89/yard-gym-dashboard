@@ -3,6 +3,38 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PERIODS, type PeriodKey } from '@/lib/periods';
+import {
+  AlertTriangle,
+  CalendarClock,
+  Check,
+  Clock,
+  ExternalLink,
+  Gavel,
+  HeartPulse,
+  Inbox as InboxIcon,
+  Receipt,
+  ShieldAlert,
+  Star,
+  Undo2,
+} from 'lucide-react';
+
+// Money/legal categories get a shape as well as a colour, so severity survives a
+// glance and doesn't depend on distinguishing red from amber.
+const FLAG_META: Record<string, { icon: typeof Receipt; label: string }> = {
+  'payment overdue': { icon: Receipt, label: 'Payment overdue' },
+  invoice: { icon: Receipt, label: 'Invoice' },
+  'refund request': { icon: Receipt, label: 'Refund' },
+  complaint: { icon: ShieldAlert, label: 'Complaint' },
+  legal: { icon: Gavel, label: 'Legal' },
+  insurance: { icon: Gavel, label: 'Insurance' },
+  workcover: { icon: ShieldAlert, label: 'WorkCover' },
+};
+
+const VIP_LABEL: Record<string, string> = {
+  staff: 'Staff',
+  'at-risk member': 'At-risk member',
+  'crm contact': 'Open deal',
+};
 
 type Urgency = 'high' | 'medium' | 'low';
 type Task = {
@@ -14,6 +46,9 @@ type Task = {
   id?: string;
   completedAt?: string | null;
   snoozedUntil?: string | null;
+  flags?: string[];
+  deadline?: string | null;
+  vip?: string | null;
 };
 type EmailItem = { from: string; subject: string; date: string; snippet: string; url: string | null };
 type Brief = {
@@ -129,6 +164,7 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
         <div className="space-y-6">
+          <DataFreshness updatedAt={data?.insights?.updatedAt ?? null} />
           <BusinessBar />
           <DeskTiles data={data} metaAds={metaAds} ghl={ghl} />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -139,6 +175,40 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Member and attendance figures come from a nightly sync. When that sync stops,
+// every number below keeps rendering as though nothing is wrong — which is
+// exactly how a 3-day gap once showed up as a 30% attendance collapse. Say so
+// rather than quietly serving stale figures with full confidence.
+function DataFreshness({ updatedAt }: { updatedAt: string | null }) {
+  if (!updatedAt) return null;
+  const ageHours = (Date.now() - new Date(updatedAt).getTime()) / 3600000;
+  if (ageHours < 36) return null;
+
+  const days = Math.floor(ageHours / 24);
+  const when = new Date(updatedAt).toLocaleDateString('en-AU', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'Australia/Sydney',
+  });
+
+  return (
+    <div className="flex items-start gap-2.5 border border-amber-300 bg-amber-50 rounded-xl px-4 py-3">
+      <AlertTriangle size={16} className="text-amber-700 flex-none mt-0.5" aria-hidden />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-amber-900">
+          Member data hasn&apos;t synced for {days} {days === 1 ? 'day' : 'days'}
+        </p>
+        <p className="text-xs text-amber-800 mt-0.5">
+          Last updated {when}. Active members, attendance and the at-risk list below are from that
+          date — a part-synced week reads as a decline even when attendance is fine. Money, visits
+          and leads in the bar below are live and unaffected.
+        </p>
+      </div>
     </div>
   );
 }
@@ -480,7 +550,7 @@ function InboxCard({ data }: { data: DashboardData | null }) {
             {view === 'tasks' ? (
               activeTasks.length === 0 ? (
                 <div className="border border-gym-border rounded-xl p-5 text-center text-sm text-gray-500">
-                  Nothing needs action right now. ✅
+                  Nothing needs action right now.
                 </div>
               ) : (
                 <ul className="space-y-2">
@@ -526,8 +596,9 @@ function InboxCard({ data }: { data: DashboardData | null }) {
                           applyOverride(t, { completedAt: null });
                           postTaskAction(tab, t, 'uncomplete');
                         }}
-                        className="text-[11px] font-medium text-gym-accent hover:underline flex-none"
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-gym-accent hover:underline flex-none"
                       >
+                        <Undo2 size={11} strokeWidth={2.5} aria-hidden />
                         Undo
                       </button>
                     </li>
@@ -583,16 +654,54 @@ function TaskCard({
 }) {
   const [snoozing, setSnoozing] = useState(false);
 
+  const flags = (t.flags ?? []).filter((f) => FLAG_META[f]);
+  const hasSignals = flags.length > 0 || !!t.deadline || !!t.vip;
+
   const content = (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-2.5">
       <span className={`mt-1.5 w-2 h-2 rounded-full flex-none ${URGENCY[t.urgency]?.dot ?? 'bg-gray-300'}`} />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-gray-900">{t.title}</p>
-        {t.detail && <p className="text-sm text-gray-600 mt-0.5">{t.detail}</p>}
+        <p className="text-sm font-semibold text-gray-900 leading-snug">{t.title}</p>
+
+        {/* Why it's urgent, stated rather than implied by colour alone. */}
+        {hasSignals && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+            {flags.map((f) => {
+              const { icon: Icon, label } = FLAG_META[f];
+              return (
+                <span
+                  key={f}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-rose-200 bg-rose-50 text-rose-800"
+                >
+                  <Icon size={11} strokeWidth={2.5} aria-hidden />
+                  {label}
+                </span>
+              );
+            })}
+            {t.deadline && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800">
+                <CalendarClock size={11} strokeWidth={2.5} aria-hidden />
+                {t.deadline}
+              </span>
+            )}
+            {t.vip && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-gym-border bg-gray-50 text-gray-700">
+                {t.vip === 'at-risk member' ? (
+                  <HeartPulse size={11} strokeWidth={2.5} aria-hidden />
+                ) : (
+                  <Star size={11} strokeWidth={2.5} aria-hidden />
+                )}
+                {VIP_LABEL[t.vip] ?? t.vip}
+              </span>
+            )}
+          </div>
+        )}
+
+        {t.detail && <p className="text-sm text-gray-600 mt-1.5 leading-snug">{t.detail}</p>}
         {t.source && (
-          <p className="text-[11px] text-gray-400 mt-1.5 truncate">
-            from: {t.source}
-            {t.url && <span className="text-gym-accent"> · open →</span>}
+          <p className="text-[11px] text-gray-400 mt-1.5 truncate inline-flex items-center gap-1 max-w-full">
+            <span className="truncate">{t.source}</span>
+            {t.url && <ExternalLink size={11} className="text-gym-accent flex-none" aria-hidden />}
           </p>
         )}
       </div>
@@ -638,15 +747,17 @@ function TaskCard({
           <button
             type="button"
             onClick={onComplete}
-            className="text-[11px] font-medium px-2 py-1 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 transition"
+            className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50 transition"
           >
+            <Check size={12} strokeWidth={2.5} aria-hidden />
             Mark complete
           </button>
           <button
             type="button"
             onClick={() => setSnoozing(true)}
-            className="text-[11px] font-medium px-2 py-1 rounded border border-gym-border text-gray-600 hover:bg-gray-50 transition"
+            className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded border border-gym-border text-gray-600 hover:bg-gray-50 transition"
           >
+            <Clock size={12} strokeWidth={2.5} aria-hidden />
             Remind me later
           </button>
         </div>
@@ -659,7 +770,7 @@ function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
   if (scope === 'business') {
     return (
       <div className="border border-gym-border rounded-xl p-5 text-center">
-        <p className="text-2xl mb-2">📥</p>
+        <InboxIcon size={22} className="mx-auto mb-2 text-gym-muted" aria-hidden />
         <p className="text-sm font-medium text-gray-800">Connect your business inbox</p>
         <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto mb-3">
           Once connected, your agent reads it each morning and lists what needs doing here. The
@@ -676,7 +787,7 @@ function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
   }
   return (
     <div className="border border-gym-border rounded-xl p-5 text-center">
-      <p className="text-2xl mb-2">📥</p>
+      <InboxIcon size={22} className="mx-auto mb-2 text-gym-muted" aria-hidden />
       <p className="text-sm font-medium text-gray-800">Connect your {scope} inbox</p>
       <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
         Once connected, your agent reads it each morning and lists what needs doing here. Ask your

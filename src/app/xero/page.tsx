@@ -1,3 +1,5 @@
+import { Wallet } from "lucide-react";
+
 export default function XeroPage() {
   return (
     <div className="p-4 md:p-8">
@@ -7,7 +9,7 @@ export default function XeroPage() {
       </div>
       <div className="bg-gym-surface border border-gym-border rounded-xl p-12 flex flex-col items-center justify-center text-center">
         <div className="w-16 h-16 bg-gym-border rounded-2xl flex items-center justify-center mb-4">
-          <span className="text-3xl">₿</span>
+          <Wallet size={26} strokeWidth={1.75} className="text-gym-muted" aria-hidden />
         </div>
         <h2 className="text-gym-text font-semibold text-lg mb-2">Xero Integration</h2>
         <p className="text-gym-muted text-sm max-w-sm">Connect your Xero account to view invoices, expenses, and financial reports.</p>

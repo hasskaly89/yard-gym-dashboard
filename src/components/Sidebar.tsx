@@ -3,7 +3,37 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { PAGES } from "@/lib/access";
+import { PAGES, type NavIcon } from "@/lib/access";
+import {
+  LayoutGrid,
+  Users,
+  HeartPulse,
+  ClipboardList,
+  Wallet,
+  Megaphone,
+  Workflow,
+  Trophy,
+  Clock,
+  ShieldCheck,
+  LogOut,
+  X,
+} from "lucide-react";
+
+// One icon set, one stroke width — replacing the unicode glyphs the nav used to
+// render, which were emoji-as-icons and inconsistent in weight because a font
+// drew them rather than an icon set.
+const NAV_ICON: Record<NavIcon, typeof LayoutGrid> = {
+  dashboard: LayoutGrid,
+  members: Users,
+  retention: HeartPulse,
+  logs: ClipboardList,
+  finance: Wallet,
+  ads: Megaphone,
+  crm: Workflow,
+  milestones: Trophy,
+  timesheets: Clock,
+  admin: ShieldCheck,
+};
 import type { NavAccess } from "./RootLayoutClient";
 
 export default function Sidebar({
@@ -69,10 +99,7 @@ export default function Sidebar({
             aria-label="Close navigation"
             className="md:hidden p-1.5 -mr-1 rounded text-gym-muted hover:bg-gym-border hover:text-gym-text"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
+            <X size={20} strokeWidth={1.75} aria-hidden />
           </button>
         </div>
 
@@ -93,7 +120,10 @@ export default function Sidebar({
                         : "text-gym-text-secondary hover:text-gym-text hover:bg-gym-border"
                     }`}
                   >
-                    <span className="text-base">{item.icon}</span>
+                    {(() => {
+                      const Icon = NAV_ICON[item.icon] ?? LayoutGrid;
+                      return <Icon size={17} strokeWidth={1.75} aria-hidden />;
+                    })()}
                     {item.label}
                   </Link>
                 </li>
@@ -116,7 +146,7 @@ export default function Sidebar({
                     : "text-gym-text-secondary hover:text-gym-text hover:bg-gym-border"
                 }`}
               >
-                <span className="text-base">◐</span>
+                <ShieldCheck size={17} strokeWidth={1.75} aria-hidden />
                 Team Access
               </Link>
             </>
@@ -140,11 +170,7 @@ export default function Sidebar({
             onClick={handleLogout}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gym-text-secondary hover:text-gym-text hover:bg-gym-border transition"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
+            <LogOut size={16} strokeWidth={1.75} aria-hidden />
             Sign out
           </button>
         </div>

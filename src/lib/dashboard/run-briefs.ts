@@ -16,6 +16,7 @@ import {
   addGhlOpportunityContacts,
   replyCheckCandidates,
   scoreEmails,
+  type ScoredEmail,
 } from '@/lib/ai/email-signals';
 import { computeMindBodyInsights } from './insights';
 
@@ -57,7 +58,10 @@ function tokenize(s: string): Set<string> {
   );
 }
 
-function linkTasksToEmails(tasks: BriefTask[], emails: FetchedEmail[]): BriefTask[] {
+// Match each task back to the email it came from, and carry across both the
+// link AND the signals that made it urgent — the flags are why the dashboard can
+// label a task "legal" or "payment overdue" rather than just colouring it red.
+function linkTasksToEmails(tasks: BriefTask[], emails: ScoredEmail[]): BriefTask[] {
   return tasks.map((t) => {
     const subjectPart = t.source.includes(' - ')
       ? t.source.split(' - ').slice(1).join(' - ')
@@ -65,16 +69,25 @@ function linkTasksToEmails(tasks: BriefTask[], emails: FetchedEmail[]): BriefTas
     const sourceTokens = tokenize(subjectPart);
     if (sourceTokens.size === 0) return { ...t, url: null };
 
-    let best: { url: string | null; score: number } | null = null;
+    let best: { email: ScoredEmail; score: number } | null = null;
     for (const e of emails) {
       const subjTokens = tokenize(e.subject);
       if (subjTokens.size === 0) continue;
       let overlap = 0;
       for (const tok of sourceTokens) if (subjTokens.has(tok)) overlap++;
       const score = overlap / Math.min(sourceTokens.size, subjTokens.size);
-      if (score > 0.5 && (!best || score > best.score)) best = { url: e.url, score };
+      if (score > 0.5 && (!best || score > best.score)) best = { email: e, score };
     }
-    return { ...t, url: best?.url ?? null };
+    if (!best) return { ...t, url: null };
+
+    const s = best.email.signals;
+    return {
+      ...t,
+      url: best.email.url,
+      flags: s.financialKeywordHit,
+      deadline: s.detectedDeadline,
+      vip: s.vipReason,
+    };
   });
 }
 
@@ -163,7 +176,7 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
       const row = {
         scope,
         summary: brief.summary,
-        tasks: linkTasksToEmails(brief.tasks, emails),
+        tasks: linkTasksToEmails(brief.tasks, scored),
         emails_scanned: emails.length,
         emails: emails.slice(0, 20),
         generated_at: now,

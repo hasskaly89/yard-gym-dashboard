@@ -13,18 +13,23 @@ export type PageKey =
   | 'milestones'
   | 'timesheets';
 
-export type NavPage = { key: PageKey; href: string; label: string; icon: string };
+// `icon` is a NAME, not a component — this module is imported by proxy.ts on the
+// server, so it must stay free of React. Sidebar maps names to lucide icons.
+export type NavIcon =
+  | 'dashboard' | 'members' | 'retention' | 'logs' | 'finance'
+  | 'ads' | 'crm' | 'milestones' | 'timesheets' | 'admin';
+export type NavPage = { key: PageKey; href: string; label: string; icon: NavIcon };
 
 export const PAGES: NavPage[] = [
-  { key: 'dashboard', href: '/', label: 'Dashboard', icon: '⊞' },
-  { key: 'mindbody', href: '/mindbody', label: 'MindBody', icon: '◈' },
-  { key: 'retention', href: '/retention', label: 'Retention', icon: '♥' },
-  { key: 'retention-logs', href: '/retention/logs', label: 'Retention Logs', icon: '▤' },
-  { key: 'xero', href: '/xero', label: 'Xero', icon: '₿' },
-  { key: 'meta-ads', href: '/meta-ads', label: 'Meta Ads', icon: '◉' },
-  { key: 'gohighlevel', href: '/gohighlevel', label: 'GoHighLevel', icon: '▲' },
-  { key: 'milestones', href: '/milestones', label: 'Milestones', icon: '🏆' },
-  { key: 'timesheets', href: '/timesheets', label: 'Timesheets', icon: '◷' },
+  { key: 'dashboard', href: '/', label: 'Dashboard', icon: 'dashboard' },
+  { key: 'mindbody', href: '/mindbody', label: 'MindBody', icon: 'members' },
+  { key: 'retention', href: '/retention', label: 'Retention', icon: 'retention' },
+  { key: 'retention-logs', href: '/retention/logs', label: 'Retention Logs', icon: 'logs' },
+  { key: 'xero', href: '/xero', label: 'Xero', icon: 'finance' },
+  { key: 'meta-ads', href: '/meta-ads', label: 'Meta Ads', icon: 'ads' },
+  { key: 'gohighlevel', href: '/gohighlevel', label: 'GoHighLevel', icon: 'crm' },
+  { key: 'milestones', href: '/milestones', label: 'Milestones', icon: 'milestones' },
+  { key: 'timesheets', href: '/timesheets', label: 'Timesheets', icon: 'timesheets' },
 ];
 
 export const ALL_PAGE_KEYS: PageKey[] = PAGES.map((p) => p.key);

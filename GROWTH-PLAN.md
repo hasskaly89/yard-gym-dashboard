@@ -8,54 +8,97 @@ calendar and the Recovr account. Every number was pulled, not estimated.
 
 ---
 
-## The one finding that matters
+## Read this first: GHL's own numbers are not true
 
-Your leads are going into the wrong funnel.
+Every pipeline figure in GoHighLevel reflects whether somebody moved a card, not
+whether money changed hands. Cross-referencing every opportunity against the
+MindBody membership list gives a very different picture:
 
-| Pipeline | Won | Total | Conversion | New leads (60d) |
+| Pipeline | Entered | Paying today | **True rate** | GHL claimed |
 |---|---|---|---|---|
-| **Open Week** | 42 | 80 | **52.5%** | **0** |
-| Challenge | 19 | 132 | 14.4% | 0 |
-| **Trials** | 71 | 874 | **8.1%** | **126** |
+| **Trials** | 875 | **38** | **4.3%** | 8.1% |
+| Open Week | 80 | 25 | 31.3% | 52.5% |
+| Challenge | 135 | 77 | 57.0% | 14.4% |
+| Purchased M/S | 242 won | 60 | 24.8% | — |
 
-In the last 60 days, **134 new opportunities were created and 126 landed in
-Trials** — including all **53 Facebook leads**. Open Week, which converts more
-than six times better, received **nothing**. It's dormant.
+The CRM is not being maintained, and it distorts in both directions:
 
-Meta is working: your KIYO campaign delivers leads at **$16.69**. The money isn't
-the problem. The destination is.
+- **66 people sitting in Challenge "open" are already paying members.** Nobody
+  moved the card. That's why Challenge looked like 14% and is really ~57%.
+- **Of 242 "won" memberships, only 60 still pay.** 182 have lapsed.
+- **Trials: 719 open, 2 paying.** Confirmed dead with hard evidence, not
+  inference.
 
-**What that difference is worth**, at your current ~26 Facebook leads/month:
+**Never quote a GHL conversion rate again without this cross-check.** Anything
+built on pipeline stages alone is measuring admin habits.
 
-- Into Trials at 8.1% → **~2 members/month** → +85 takes **40 months**
-- Into Open Week at 52.5% → **~14 members/month** → +85 takes **~6 months**
+## What this means for acquisition
 
-**The honest caveat:** Open Week's 52.5% is measured on whoever enters it today —
-likely warm, referral and walk-in traffic. Cold paid traffic will convert lower.
-Do not bank on 52.5% transferring intact. But even at **half** that rate it is
-still 3× better than Trials, and that is the single cheapest change available to
-you. Treat it as a test with a real hypothesis, not a certainty.
+Meta is genuinely healthy — the KIYO campaign delivers leads at **$16.69**. But
+all 53 Facebook leads in the last 60 days went into **Trials**, which converts to
+a paying member **4.3%** of the time.
+
+**Real cost per member acquired today: about $388.**
+
+That's still profitable against a $69/week membership (~$3,588/year), but it is
+roughly ten times worse than it looks from the ad dashboard, and it is the number
+to beat.
+
+## Where the leads should go instead
+
+**Open Week and Challenge are limited campaigns, not always-on funnels.** Open
+Week runs again next month. That's why both show zero new leads in 60 days, and
+part of why they convert well — a campaign has a deadline, a cohort and urgency
+that an open-ended "trial" never has.
+
+So the play is not "re-route leads permanently". It is:
+
+1. **Time paid spend to the campaign windows.** Concentrate Meta budget into the
+   weeks Open Week and Challenge actually run, instead of trickling it into
+   Trials year-round.
+2. **Run these campaigns more often.** They are the only things converting at
+   30–57%. If Open Week is a few weeks per quarter, that's most of the year with
+   paid traffic pointed at a 4.3% funnel.
+3. **Give leads arriving between campaigns a real destination** — a waitlist for
+   the next Open Week beats dumping them into Trials to go stale.
+
+**One caveat on Challenge's 57%:** its pipeline has both `*Non-member Lead` and
+`*Member Lead` stages, so existing members joining a challenge are mixed in with
+new acquisitions. The true *new-member* rate is lower than 57%. Split those
+stages before treating it as an acquisition channel.
 
 ---
 
 ## Do these tomorrow, in this order
 
-### 1. Re-point Meta leads from Trials to Open Week — 30 minutes
+### 1. Plan the spend around next month's Open Week — 30 minutes
 
-The highest-leverage half hour in this document. In GoHighLevel, change the
-automation that creates opportunities from the Facebook lead form so it drops
-them into **Open Week** instead of **Trials**. Leave everything else alone.
+Open Week runs again next month. Decide now:
 
-Then let it run two weeks and compare conversion against the 8.1% baseline. If
-cold traffic converts at even 20%, you have found roughly **$15,000 of ad
-efficiency** without spending another dollar.
+- **Hold most of the Meta budget for that window** rather than spending it into
+  Trials in the meantime. Same money, a funnel converting ~31% instead of 4.3%.
+- **Start a waitlist now.** Every lead that arrives before the campaign opens
+  goes to "Open Week — next intake" instead of into Trials to die. That's the
+  destination problem solved without inventing a new funnel.
+- **Set the dates and build the ad creative this week**, so spend can go live the
+  day the campaign opens instead of three days into it.
 
-### 2. Kill the $50 trial ad — 5 minutes
+### 2. Fix the CRM data before trusting any of it — 1 hour
+
+66 paying members are sitting in Challenge "open" and 182 lapsed members sit in
+"won". Until cards reflect reality, every conversion number you or I calculate is
+measuring admin habits.
+
+Fastest version: bulk-close the 557 Trials opportunities older than 90 days
+(2 of them are paying members, so you lose nothing), and move the 66 known
+paying members out of Challenge "open" to won.
+
+### 3. Kill the $50 trial ad — 5 minutes
 
 `pd_$50Trial_Cold_Conv`: **$46.14 spent, 1 lead, CPL $46.14**. Your other
 campaign is at $16.69. Turn it off and move the budget.
 
-### 3. Work the 47 live trials — today, by hand
+### 4. Work the 26 people actually in trial — today, by hand
 
 Of 718 open trials, only **47 were created in the last 30 days** and only **26
 people are actually in trial right now**:
@@ -68,7 +111,7 @@ people are actually in trial right now**:
 Twenty-six conversations. At Trials' own 8% that's 2 members; worked properly by
 phone it should be far better. This is the fastest win in the list.
 
-### 4. Accept that 557 trials are dead
+### 5. Accept that 557 trials are dead
 
 **557 of the 718 open trials are over 90 days old** — 413 are over 180 days.
 They are not a pipeline, they are a list. Two implications:
@@ -80,7 +123,7 @@ They are not a pipeline, they are a list. Two implications:
 
 Closing them also makes your dashboard honest again.
 
-### 5. Turn the content calendar on — the cheapest acquisition you have
+### 6. Turn the content calendar on — the cheapest acquisition you have
 
 Your September plan is fully built and **entirely unexecuted**: 11 posts pending,
 **0 approved**, 0 story days planned, against a target of 2 posts/week and 6–8
@@ -133,16 +176,19 @@ both in parallel for a few weeks.
 
 | Source | Monthly | Cost |
 |---|---|---|
-| Meta → Open Week (at a conservative 25%) | ~7 | ~$450/mo |
-| Live trials worked by phone | ~3 | $0 |
+| Meta spend concentrated into campaign windows (~31%) | ~6–8 | ~$450/mo |
+| The 26 live trials, worked by phone | ~3 | $0 |
 | Organic content, once running | ~2–4 | $0 |
 | Retention saved (once the cron runs) | ~5 recovered | $0 |
 | **Net** | **~12–15/month** | |
 
-**+85 in roughly 6–7 months at about $450/month in ad spend** — under $40 per
-member acquired, against a $69/week membership. That works.
+**+85 in roughly 6–8 months at about $450/month.** Cost per acquired member falls
+from ~$388 (today, into Trials at 4.3%) to roughly **$55–70** if paid traffic
+only runs into campaign windows converting near 31%.
 
-It only works if the routing change happens. Everything else is optimisation.
+Retention matters as much as acquisition here: at ~8% monthly churn you lose
+around 17 members a month, so the cron being dead has been quietly cancelling out
+whatever the ads bring in.
 
 ---
 

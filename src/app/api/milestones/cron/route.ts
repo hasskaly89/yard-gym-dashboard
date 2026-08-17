@@ -44,8 +44,37 @@ export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET ?? process.env.SYNC_SECRET
   const isVercelCron = req.headers.get('x-vercel-cron') === '1'
 
+  // This route was scheduled daily for months and produced NOTHING — no synced
+  // visits, no milestone messages, no refreshed scores — with no way to tell
+  // whether Vercel was invoking it at all. Log the auth decision on every hit so
+  // a single log line answers that. Vercel only attaches an Authorization header
+  // when CRON_SECRET is set as an env var; without it this route depends
+  // entirely on the x-vercel-cron header, and `cronCalled=true authOk=false`
+  // below is the signature of that failure.
+  console.log(
+    `[cron] auth check — cronHeader=${isVercelCron} hasAuthHeader=${!!authHeader} ` +
+      `cronSecretConfigured=${!!process.env.CRON_SECRET} syncSecretConfigured=${!!process.env.SYNC_SECRET}`,
+  )
+
   if (!isVercelCron && authHeader !== `Bearer ${cronSecret}`) {
+    console.error('[cron] REJECTED 401 — scheduled run did no work. Set CRON_SECRET in Vercel.')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Persist the fact that a run STARTED, before any work. sync_state is only
+  // written on success, so a started-but-failed run was previously invisible —
+  // and Hobby keeps logs for one hour, which is not long enough to catch a 7am
+  // job. This row survives.
+  const startedAt = new Date().toISOString()
+  try {
+    await createAdminClient()
+      .from('sync_state')
+      .upsert(
+        { key: 'cron_last_invoked', last_run_at: startedAt, updated_at: startedAt },
+        { onConflict: 'key' },
+      )
+  } catch {
+    // never let bookkeeping stop the actual job
   }
 
   const supabase = createAdminClient()
@@ -199,9 +228,23 @@ export async function GET(req: NextRequest) {
 
   console.log('[Cron] Milestone scan complete:', summary)
 
-  return NextResponse.json({
-    ok: true,
-    scanned: members.length,
-    ...summary,
-  })
+  // FAIL LOUDLY. Every step above is wrapped in try/catch that pushes to
+  // summary.errors, and this used to return HTTP 200 regardless — so a run
+  // where the visit sync died still reported success, and Vercel's cron history
+  // showed a healthy green tick. That is why months of no-op runs went
+  // unnoticed. A non-2xx here surfaces in the cron dashboard.
+  const failed = summary.errors.length > 0
+  if (failed) {
+    console.error('[Cron] FAILED with errors:', summary.errors)
+  }
+
+  return NextResponse.json(
+    {
+      ok: !failed,
+      scanned: members.length,
+      startedAt,
+      ...summary,
+    },
+    { status: failed ? 500 : 200 },
+  )
 }

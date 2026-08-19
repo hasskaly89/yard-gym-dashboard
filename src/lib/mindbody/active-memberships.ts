@@ -12,7 +12,16 @@ import { createAdminClient } from '@/lib/supabase/admin';
 // TODO: Friends & Family Membership — ID unknown (no current holders in
 // the May 2026 sample; ask Hassan to look it up in MindBody admin and
 // add the ID here).
-export const ACTIVE_MEMBERSHIP_IDS = new Set<number>([11, 12, 24, 26, 27, 33]);
+// Hassan's seven membership tiers, confirmed against the MindBody Members
+// report (the report's optMembership URL parameter IS the API's MembershipId):
+//   11 Foundation Tier 1 · 12 TYG Membership · 26 Foundation Tier 2
+//   27 VIP · 33 Black Friday Weekly · 42 Founders Day Weekly
+//   43 Unlimited PIF 8 Week
+// 24 (Influencer, Non-Fitness) was counted here but is a comp, not a paying
+// member — 12 people. 42 and 43 were missing — 8 people who do pay.
+// Net: 219 -> 215. NOTE this is a stored flag: the count only moves after
+// syncMemberMemberships() re-runs.
+export const ACTIVE_MEMBERSHIP_IDS = new Set<number>([11, 12, 26, 27, 33, 42, 43]);
 
 const BATCH_SIZE = 30;
 const BATCH_DELAY_MS = 200;

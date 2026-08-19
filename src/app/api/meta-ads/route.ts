@@ -228,10 +228,18 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
         'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions',
     }),
     // 2) Ad entities for status + creative (only for ads that have insight rows).
+    // Meta rejects oversized requests with "Please reduce the amount of data
+    // you're asking for" — 500 ads x full creative payloads (object_story_spec
+    // and asset_feed_spec are large) crosses that line as the account grows.
+    // Smaller page, and FAIL SOFT: creatives are decoration, spend and leads
+    // are the point, so a creative hiccup must not drop the page to snapshot.
     graph<{ data: AdRow[] }>(`${act}/ads`, {
-      limit: '500',
+      limit: '100',
       fields:
-        'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type,object_story_spec,asset_feed_spec}',
+        'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type}',
+    }).catch((err) => {
+      console.error('Meta Ads creative fetch failed (numbers unaffected):', err);
+      return { data: [] as AdRow[] };
     }),
     // Chart data is supplementary — fail soft so a breakdown hiccup never
     // takes down the core numbers/ads above.

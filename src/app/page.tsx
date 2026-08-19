@@ -837,8 +837,6 @@ function MindBodyRetentionSidebar({ insights, ghl }: { insights: Insights; ghl: 
           <Stat label="Suspended" value={insights.suspended ?? null} />
         </div>
 
-        <AttendanceWeek insights={insights} />
-
         <div className="grid grid-cols-2 gap-3 text-center border-t border-gym-border pt-4">
           <Stat label="At risk" value={atRiskCount} tone="warn" />
           <Stat label="Healthy" value={insights.risk.healthy} />
@@ -916,9 +914,6 @@ function Stat({ label, value, tone }: { label: string; value: number | null; ton
   );
 }
 
-// Attendance on the Monday-start week Hassan reads off MindBody. The headline
-// is this week so far; the comparison is the SAME elapsed slice of last week,
-// never the full week, so a Tuesday can't read as a collapse.
 function AttendanceWeek({ insights }: { insights: NonNullable<Insights> }) {
   const { sessionsThisWeek: now, sessionsLastWeekToDate: then, sessionsLastWeekFull: full } = insights;
   const delta = then > 0 ? Math.round(((now - then) / then) * 100) : null;

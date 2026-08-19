@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/profile';
 import { getMBToken } from '@/lib/mindbody/api';
 import { resolvePeriod, isPeriodKey, type Period } from '@/lib/periods';
 
@@ -39,6 +39,7 @@ export type BusinessSummary = {
   leads: { created: number; won: number; open: number; compare: number | null } | null;
   costCalls: number;
   errors: string[];
+  moneyHidden?: boolean;
 };
 
 function mbHeaders(token: string) {
@@ -230,13 +231,24 @@ async function build(period: Period, pipelineId?: string): Promise<BusinessSumma
   };
 }
 
+/** Strip takings for profiles not cleared to see money. Cache stores the full
+ *  object once; redaction happens per request so one viewer can't warm a cache
+ *  that leaks to the next. */
+function redact(data: BusinessSummary, canSeeMoney: boolean): BusinessSummary {
+  if (canSeeMoney) return data;
+  return { ...data, revenue: { total: 0, transactions: 0, compare: null }, moneyHidden: true };
+}
+
 export async function GET(request: Request) {
   // /api is outside the proxy's auth matcher, so this gates itself.
-  const auth = await createClient();
-  const { data: userData } = await auth.auth.getUser();
-  if (!userData.user) {
+  const me = await getCurrentUser();
+  if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  // Revenue is owner-level information. Visits and leads are operational and
+  // useful to a coach; takings are not, so they're stripped rather than the
+  // whole endpoint refused — a front-desk profile still gets a working tile.
+  const canSeeMoney = me.role === 'admin' || me.allowedPages.includes('xero');
 
   const url = new URL(request.url);
   const raw = url.searchParams.get('period') ?? 'this-week';
@@ -246,13 +258,13 @@ export async function GET(request: Request) {
   const cacheKey = `${key}:${pipelineId ?? 'all'}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_TTL) {
-    return NextResponse.json({ ...(hit.data as BusinessSummary), cached: true });
+    return NextResponse.json({ ...redact(hit.data as BusinessSummary, canSeeMoney), cached: true });
   }
 
   try {
     const data = await build(resolvePeriod(key), pipelineId);
     cache.set(cacheKey, { at: Date.now(), data });
-    return NextResponse.json(data);
+    return NextResponse.json(redact(data, canSeeMoney));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to build summary' },

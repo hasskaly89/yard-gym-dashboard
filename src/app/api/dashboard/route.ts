@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { createClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/profile';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { emailAccountFor } from '@/lib/email/imap';
 import { isOAuthConnected } from '@/lib/email/gmail-oauth';
@@ -26,11 +26,16 @@ export async function GET() {
   // The proxy's matcher excludes /api, so this route is NOT covered by the
   // page auth gate — without this check it hands member names, risk bands, AI
   // notes and both brief bodies to anyone who knows the URL.
-  const auth = await createClient();
-  const { data: userData } = await auth.auth.getUser();
-  if (!userData.user) {
+  const me = await getCurrentUser();
+  if (!me) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  // Content is scoped per profile, not just per page. The dashboard is the one
+  // page everyone can reach (ALWAYS_ALLOWED, so nobody redirect-loops), which
+  // means anything sensitive rendered on it has to be gated HERE — otherwise
+  // adding a front-desk login silently hands over the owner's personal inbox.
+  const isAdmin = me.role === 'admin';
+  const canSeeRetention = isAdmin || me.allowedPages.includes('retention');
 
   const supabase = createAdminClient();
 
@@ -79,8 +84,13 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    insights,
-    briefs,
+    access: { role: me.role, allowedPages: me.allowedPages },
+    insights: canSeeRetention ? insights : null,
+    briefs: {
+      // The personal brief is the owner's own mailbox. Never leaves admin.
+      personal: isAdmin ? briefs.personal : null,
+      business: briefs.business,
+    },
     config: {
       personalConnected: !!emailAccountFor('personal'),
       businessConnected: await isOAuthConnected('business'),

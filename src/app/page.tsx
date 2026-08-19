@@ -74,6 +74,7 @@ type Insights = {
 } | null;
 
 type DashboardData = {
+  access?: { role: 'admin' | 'staff'; allowedPages: string[] };
   insights: Insights;
   briefs: { personal: Brief; business: Brief };
   config: { personalConnected: boolean; businessConnected: boolean };
@@ -171,7 +172,7 @@ export default function DashboardPage() {
             <div className="lg:col-span-2">
               <InboxCard data={data} />
             </div>
-            <MindBodyRetentionSidebar insights={data?.insights ?? null} ghl={ghl} />
+            {data?.insights && <MindBodyRetentionSidebar insights={data.insights} ghl={ghl} />}
           </div>
         </div>
       )}
@@ -227,6 +228,7 @@ type BusinessSummary = {
   leads: { created: number; won: number; open: number; compare: number | null } | null;
   costCalls: number;
   errors: string[];
+  moneyHidden?: boolean;
 } | null;
 
 // Money, visits and leads on one calendar, for one chosen period. Weeks run
@@ -284,14 +286,22 @@ function BusinessBar() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gym-border">
-        <Metric
-          label="Money in"
-          value={data ? `$${data.revenue.total.toLocaleString('en-AU', { maximumFractionDigits: 0 })}` : null}
-          sub={data ? `${data.revenue.transactions} transactions` : ''}
-          delta={pctDelta(data?.revenue.total, data?.revenue.compare)}
-          loading={loading}
-        />
+      <div
+        className={`grid grid-cols-1 divide-y sm:divide-y-0 sm:divide-x divide-gym-border ${
+          data?.moneyHidden ? 'sm:grid-cols-2' : 'sm:grid-cols-3'
+        }`}
+      >
+        {/* Takings are dropped entirely for profiles without money access —
+            an empty or zeroed tile invites the wrong conclusion. */}
+        {!data?.moneyHidden && (
+          <Metric
+            label="Money in"
+            value={data ? `$${data.revenue.total.toLocaleString('en-AU', { maximumFractionDigits: 0 })}` : null}
+            sub={data ? `${data.revenue.transactions} transactions` : ''}
+            delta={pctDelta(data?.revenue.total, data?.revenue.compare)}
+            loading={loading}
+          />
+        )}
         <Metric
           label="Visits"
           value={data ? data.visits.signedIn.toLocaleString('en-AU') : null}
@@ -444,6 +454,12 @@ async function postTaskAction(
 }
 
 function InboxCard({ data }: { data: DashboardData | null }) {
+  // The personal brief is the owner's own mailbox; the API returns null for
+  // anyone but an admin, so the tab simply doesn't exist for staff.
+  const canSeePersonal = !!data?.briefs.personal || data?.access?.role === 'admin';
+  const scopes: Array<'business' | 'personal'> = canSeePersonal
+    ? ['business', 'personal']
+    : ['business'];
   const [tab, setTab] = useState<'business' | 'personal'>('business');
   const [view, setView] = useState<'tasks' | 'completed' | 'emails'>('tasks');
   const [overrides, setOverrides] = useState<Record<string, TaskOverride>>({});
@@ -473,7 +489,7 @@ function InboxCard({ data }: { data: DashboardData | null }) {
     <div id="inbox" className="bg-white border border-gym-border rounded-xl overflow-hidden scroll-mt-8">
       <div className="px-5 py-4 border-b border-gym-border flex items-center justify-between gap-3 flex-wrap">
         <div className="inline-flex rounded-lg border border-gym-border p-0.5 bg-gray-50">
-          {(['business', 'personal'] as const).map((t) => (
+          {scopes.map((t) => (
             <button
               key={t}
               type="button"

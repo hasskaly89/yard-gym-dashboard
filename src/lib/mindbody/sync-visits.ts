@@ -1,3 +1,4 @@
+import { fromZonedTime } from 'date-fns-tz';
 import { getMBToken, fetchMBClientVisits } from './api';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -15,6 +16,20 @@ import { createAdminClient } from '@/lib/supabase/admin';
 //     as visit history accumulates — this is what keeps the nightly bill tiny.
 //   'backfill' (one-time / recovery): re-pulls full history since SINCE_DATE.
 //     Only run this to seed an empty DB or repair gaps; it is expensive.
+
+// MindBody returns StartDateTime as a NAIVE local datetime for the site's own
+// timezone — "2026-08-21T17:30:00", no offset, no Z. `new Date()` parses that
+// in the runtime's zone, which is UTC on Vercel, so a 5:30pm Sydney class was
+// stored as 17:30Z: ten hours ahead of when it actually happened.
+//
+// Confirmed from the data on 2026-08-21 — stored hours clustered at 05, 06,
+// 08, 09, 16, 17 and 18. Read as Sydney those are class times, including a
+// 120-person 5am. Read as UTC they are a 3am class with 120 attendees.
+//
+// The skew matters because last_visit_date drives the inactivity tiers
+// (7/14/21/30 days) and visit_at drives the week-over-week attendance compare.
+// A ten-hour error moves visits across day and week boundaries.
+const GYM_TZ = 'Australia/Sydney';
 
 const SINCE_DATE = '2024-04-01';
 const BATCH_SIZE = 30;
@@ -68,7 +83,12 @@ function filterSignedInClasses(visits: Visit[]): {
     const name = (v.Name || '').toLowerCase();
     if (name.includes('creche')) continue;
     if (!v.StartDateTime) continue;
-    const ts = new Date(v.StartDateTime).getTime();
+    // Respect an explicit offset if MindBody ever starts sending one; treat a
+    // naive value as gym-local wall clock. fromZonedTime handles AEST/AEDT.
+    const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/.test(v.StartDateTime);
+    const ts = hasOffset
+      ? new Date(v.StartDateTime).getTime()
+      : fromZonedTime(v.StartDateTime, GYM_TZ).getTime();
     if (Number.isNaN(ts)) continue;
     clean.push({ visitAt: new Date(ts).toISOString(), className: v.Name ?? null });
     if (ts > lastTs) lastTs = ts;

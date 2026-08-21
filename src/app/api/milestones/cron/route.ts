@@ -35,6 +35,11 @@ import { runBriefs } from '@/lib/dashboard/run-briefs'
 // 'incremental' mode — only new visits since each member's last known one — so
 // the nightly bill stays small and does not grow with history.
 const MEMBERSHIP_MAX_AGE_DAYS = 6
+// The weekly membership refresh runs in 'narrow' scope (~400-600 MindBody
+// calls). Once a month it runs 'full' (~1,635) so anything the narrow signals
+// cannot see — a dormant client who bought a membership and never visited —
+// self-corrects within 30 days.
+const FULL_SWEEP_MAX_AGE_DAYS = 30
 export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
@@ -81,6 +86,7 @@ export async function GET(req: NextRequest) {
   const summary = {
     membershipSync: {
       ran: false,
+      scope: null as string | null,
       skippedReason: null as string | null,
       scanned: 0,
       paid: 0,
@@ -117,8 +123,15 @@ export async function GET(req: NextRequest) {
   // so only weekly. Visit sync below still runs nightly.
   try {
     if (await isDue('membership_sync', MEMBERSHIP_MAX_AGE_DAYS)) {
-      summary.membershipSync = { ...summary.membershipSync, ...(await syncMemberMemberships()), ran: true }
+      const fullSweep = await isDue('membership_full_sweep', FULL_SWEEP_MAX_AGE_DAYS)
+      const scope = fullSweep ? 'full' : 'narrow'
+      summary.membershipSync = {
+        ...summary.membershipSync,
+        ...(await syncMemberMemberships({ scope })),
+        ran: true,
+      }
       await markRun('membership_sync')
+      if (fullSweep) await markRun('membership_full_sweep')
     } else {
       summary.membershipSync.skippedReason = `ran within last ${MEMBERSHIP_MAX_AGE_DAYS}d`
     }
@@ -128,10 +141,22 @@ export async function GET(req: NextRequest) {
 
   // Step 0b: incremental visit sync (paid members only) so total_visit_count +
   // last_visit_date are current — pulls only new visits since last known one.
+  // Tracked separately from summary.errors because per-member errors are normal
+  // and must not block the run — MindBody returns ClientNotFound for local rows
+  // whose client was deleted (3 of 1,635 on 2026-08-21). Only a systemic
+  // failure means last_visit_date can't be trusted.
+  let visitSyncFailed = false
   try {
     summary.visitSync = await syncMemberVisitCounts({ mode: 'incremental' })
     await markRun('visit_sync')
+    if (summary.visitSync.scanned > 0 && summary.visitSync.updated === 0) {
+      visitSyncFailed = true
+      summary.errors.push(
+        `visit sync: scanned ${summary.visitSync.scanned} members and updated none`,
+      )
+    }
   } catch (err) {
+    visitSyncFailed = true
     summary.errors.push(`visit sync: ${(err as Error).message}`)
   }
 
@@ -153,6 +178,30 @@ export async function GET(req: NextRequest) {
     await runBriefs()
   } catch (err) {
     summary.errors.push(`briefs: ${(err as Error).message}`)
+  }
+
+  // ABORT BEFORE SENDING if the visit sync failed. The milestone loop below
+  // reads last_visit_date to decide who gets an inactivity message, and a
+  // failed visit sync leaves that column exactly as stale as the last
+  // successful run. On 2026-08-21 that gap was nine days — sending on it would
+  // have messaged members who had been training all week. The route previously
+  // continued into the loop regardless and only reported the failure in the
+  // 500 afterwards, by which point the messages were already delivered.
+  if (visitSyncFailed) {
+    console.error(
+      '[Cron] ABORTED before sending — visit sync failed, last_visit_date is stale',
+    )
+    return NextResponse.json(
+      {
+        ok: false,
+        abortedBeforeSend: true,
+        reason:
+          'visit sync failed — refusing to message members on stale last_visit_date',
+        startedAt,
+        ...summary,
+      },
+      { status: 500 },
+    )
   }
 
   // Fetch all active members. PostgREST caps select() at 1000 rows by default,

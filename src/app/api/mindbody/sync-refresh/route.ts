@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncMindBodyMembers } from '@/lib/mindbody/sync';
-import { syncMemberMemberships } from '@/lib/mindbody/active-memberships';
+import {
+  syncMemberMemberships,
+  type MembershipSyncScope,
+} from '@/lib/mindbody/active-memberships';
 import { syncMemberVisitCounts, type VisitSyncMode } from '@/lib/mindbody/sync-visits';
 import { resetMBCallCount, getMBCallCount } from '@/lib/mindbody/api';
 import { markRun } from '@/lib/mindbody/sync-state';
@@ -19,6 +22,7 @@ import { runRetentionScoring } from '@/lib/retention/run-scoring';
 //     steps?: ("members"|"memberships"|"visits")[]  // default all three
 //     mode?: "incremental" | "backfill"              // visits only, default incremental
 //     limit?: number                                 // cap members processed (test runs)
+//     scope?: "full" | "narrow"                      // memberships only, default full
 //   }
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -34,6 +38,7 @@ export async function POST(req: NextRequest) {
     steps?: string[];
     mode?: VisitSyncMode;
     limit?: number;
+    scope?: MembershipSyncScope;
   } = {};
   try {
     body = await req.json();
@@ -59,7 +64,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (steps.includes('memberships')) {
-      const memberships = await syncMemberMemberships({ limit });
+      const memberships = await syncMemberMemberships({ limit, scope: body.scope });
       totalCalls += memberships.apiCalls;
       result.memberships = memberships;
     }

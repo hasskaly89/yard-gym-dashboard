@@ -75,6 +75,11 @@ type Insights = {
 
 type DashboardData = {
   access?: { role: 'admin' | 'staff'; allowedPages: string[] };
+  dataFreshness?: {
+    cronLastInvokedAt: string | null;
+    hoursSinceCron: number | null;
+    stale: boolean;
+  };
   insights: Insights;
   briefs: { personal: Brief; business: Brief };
   config: { personalConnected: boolean; businessConnected: boolean };
@@ -165,7 +170,10 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-sm py-16 text-center">Loading your dashboard…</p>
       ) : (
         <div className="space-y-6">
-          <DataFreshness updatedAt={data?.insights?.updatedAt ?? null} />
+          <DataFreshness
+            updatedAt={data?.insights?.updatedAt ?? null}
+            freshness={data?.dataFreshness ?? null}
+          />
           <BusinessBar />
           <DeskTiles data={data} metaAds={metaAds} ghl={ghl} />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -184,7 +192,41 @@ export default function DashboardPage() {
 // every number below keeps rendering as though nothing is wrong — which is
 // exactly how a 3-day gap once showed up as a 30% attendance collapse. Say so
 // rather than quietly serving stale figures with full confidence.
-function DataFreshness({ updatedAt }: { updatedAt: string | null }) {
+function DataFreshness({
+  updatedAt,
+  freshness,
+}: {
+  updatedAt: string | null;
+  freshness: NonNullable<DashboardData['dataFreshness']> | null;
+}) {
+  // The nightly cron is the thing that keeps every figure below true, and for
+  // months it did nothing while reporting success — each scheduled run was
+  // rejected before it did any work. Staleness measured from the DATA alone
+  // can't see that: a manual backfill makes the numbers look current while the
+  // job stays dead, and the next silent failure goes unnoticed all over again.
+  // `cron_last_invoked` is written at the start of every run that gets through
+  // auth, so its absence or age is the honest liveness signal. Show it first —
+  // it's the cause; stale scores are the symptom.
+  if (freshness?.stale) {
+    return (
+      <div className="flex items-start gap-2.5 border border-amber-300 bg-amber-50 rounded-xl px-4 py-3">
+        <AlertTriangle size={16} className="text-amber-700 flex-none mt-0.5" aria-hidden />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-amber-900">
+            The nightly sync job isn&apos;t running
+          </p>
+          <p className="text-xs text-amber-800 mt-0.5">
+            {freshness.cronLastInvokedAt
+              ? `It last ran ${freshness.hoursSinceCron} hours ago.`
+              : 'It has never recorded a successful run.'}{' '}
+            Until it does, member counts, attendance and the at-risk list stop updating and
+            milestone messages stop going out — without anything else looking wrong.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (!updatedAt) return null;
   const ageHours = (Date.now() - new Date(updatedAt).getTime()) / 3600000;
   if (ageHours < 36) return null;

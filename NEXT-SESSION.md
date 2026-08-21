@@ -7,6 +7,61 @@ $0.002/call).
 
 ---
 
+## Update — 2026-08-21
+
+**P0 is resolved and proven.** The cron was never invoked successfully because
+`CRON_SECRET` was not set in Vercel. Vercel only attaches an `Authorization`
+header to cron invocations when that variable exists, so every scheduled run hit
+the 401 in `milestones/cron/route.ts` and returned *before* the
+`cron_last_invoked` write — which is why the Aug 17 instrumentation recorded
+nothing across four nights. Cron Jobs were enabled and both jobs were registered
+the whole time; only the secret was missing.
+
+Added `CRON_SECRET` (Production, sensitive) and redeployed. Proof: the Run
+button on `/api/cron/eod-summary` produced a real email at 19:34 Sydney.
+
+**Backfilled the nine-day gap.** Visits: 219 scanned, 218 updated, $0.44.
+Memberships: 1,635 scanned, $3.27. `sync_state` current; `has_paid_membership`
+219 -> 218.
+
+### Verified this session — don't re-derive
+
+- **`/client/activeclientmemberships` has no bulk mode.** Without `ClientId` it
+  returns `"At least one of the following parameters must be passed: ClientId,
+  UniqueClientId"`. `ClientIds` plural fails identically. The per-member fan-out
+  is structural. The wrapper in `api.ts` takes `clientId` as optional with
+  `offset`/`limit`, which misleadingly implies otherwise.
+- **`status = 'active'` counted 1,635** and is not a membership count — it
+  mirrors MindBody's `Client.Active` flag and includes intro offers, class
+  packs, expired members and old trials. The paying base was 218.
+- **Narrow scope measures 277, not 1,635** — union of `has_paid_membership`
+  (218), visited within 60d (220), and created within 60d (39). An 83% cut,
+  ~$0.55/run. `syncMemberMemberships({ scope: 'narrow' })`, with a monthly
+  `full` sweep driven by `sync_state.membership_full_sweep`.
+- **PostgREST `or=(...)` filters break on `+00:00`** — the `+` decodes as a
+  space and the comparison silently matches nothing. Use date-only cutoffs.
+- **`visit_at` was ten hours ahead.** MindBody returns `StartDateTime` as a
+  naive local datetime; `new Date()` parsed it in the runtime zone (UTC on
+  Vercel), so 5:30pm Sydney stored as `17:30Z`. Proven by the hour histogram:
+  05/06/08/09/16/17/18, which are class times in Sydney and a 120-person 3am
+  class in UTC. Fixed forward in `sync-visits.ts`; migration
+  `014_fix_visit_timezone.sql` repairs existing rows and **must be run by hand,
+  once**.
+
+### Still open
+
+- **Three phantom clients** — `100000974` (Mia), `100001260` (Nik), `100002066`
+  (Paul) are `status: active` locally but return `ClientNotFound` from
+  MindBody. Mia is still flagged `has_paid_membership = true` because her
+  lookup errored before the flag could be overwritten, which is why the count
+  is 218 rather than 217. Decide whether to deactivate them.
+- **DST drift, accepted deliberately.** `0 21 * * *` UTC is 07:00 Sydney in
+  AEST and 08:00 in AEDT. Vercel crons are UTC-only. From Sun 4 Oct 2026 the
+  morning report lands at 08:00. Hassan is fine with this; to hold 07:00 the
+  schedule would need `0 20 * * *` in summer.
+
+---
+
 ## Where things stand
 
 **Live on Vercel** (`main` @ `439434b`, in sync with origin):

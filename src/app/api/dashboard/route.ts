@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getLastRun } from '@/lib/mindbody/sync-state';
 import { getCurrentUser } from '@/lib/auth/profile';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { emailAccountFor } from '@/lib/email/imap';
@@ -83,8 +84,26 @@ export async function GET() {
     // table missing — tasks just show with no state
   }
 
+  // Data freshness. The nightly cron silently did nothing for months — every
+  // scheduled run 401'd before doing work, and because the route returned 200
+  // the Vercel cron history showed a healthy green tick. The dashboard kept
+  // rendering nine-day-old attendance as if it were current, which is how a
+  // fictional 30% attendance collapse got reported. `cron_last_invoked` is
+  // written at the top of the cron run, so its age is the one honest signal
+  // that the pipeline is alive. 26h allows for Hobby's 1-hour cron window.
+  const STALE_AFTER_HOURS = 26;
+  const cronLastInvoked = await getLastRun('cron_last_invoked').catch(() => null);
+  const hoursSinceCron = cronLastInvoked
+    ? (Date.now() - cronLastInvoked.getTime()) / 3600000
+    : null;
+
   return NextResponse.json({
     access: { role: me.role, allowedPages: me.allowedPages },
+    dataFreshness: {
+      cronLastInvokedAt: cronLastInvoked?.toISOString() ?? null,
+      hoursSinceCron: hoursSinceCron === null ? null : Math.round(hoursSinceCron),
+      stale: hoursSinceCron === null || hoursSinceCron > STALE_AFTER_HOURS,
+    },
     insights: canSeeRetention ? insights : null,
     briefs: {
       // The personal brief is the owner's own mailbox. Never leaves admin.

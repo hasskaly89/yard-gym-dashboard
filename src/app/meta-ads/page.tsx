@@ -55,6 +55,7 @@ interface Campaign {
 interface MetaAdsData {
   mock: boolean;
   tokenPending: boolean;
+  creativesLoaded?: boolean;
   account: { id: string; name: string; currency: string };
   range: string;
   rangeLabel: string;
@@ -64,7 +65,8 @@ interface MetaAdsData {
     spend: number;
     leads: number;
     impressions: number;
-    reach: number;
+    /** De-duplicated people. Null when Meta didn't answer — never a sum. */
+    reach: number | null;
     clicks: number;
     ctr: number;
     cpc: number | null;
@@ -82,7 +84,27 @@ const aud = (n: number | null | undefined, dp = 2) =>
 const num = (n: number | null | undefined) => (n == null ? '—' : Math.round(n).toLocaleString('en-AU'));
 const pct = (n: number | null | undefined) => (n == null ? '—' : `${n.toFixed(2)}%`);
 
+// ── Deep links into Meta Ads Manager ──────────────────────────────────────────
+// Ads Manager scopes by `act=<numeric account id>` and pre-selects rows via
+// `selected_*_ids`. If Meta ever stops honouring the selection parameter the
+// link still lands on the right account's ad table, so the failure mode is
+// "one extra click", not a broken link.
+const adsManagerUrl = (
+  view: 'ads' | 'campaigns',
+  accountId: string,
+  selectedId: string,
+) => {
+  const param = view === 'ads' ? 'selected_ad_ids' : 'selected_campaign_ids';
+  const act = accountId.replace(/^act_/, '');
+  return `https://business.facebook.com/adsmanager/manage/${view}?act=${encodeURIComponent(act)}&${param}=${encodeURIComponent(selectedId)}`;
+};
+
 // ── Verdict engine — gym lead-gen benchmarks (AUD) ─────────────────────────────
+// ⚠️ These thresholds are generic gym lead-gen numbers, NOT The Yard's own
+// economics, and they drive the Scale/Kill advice on this page. If a member is
+// worth well over these figures, "Kill" is being shown for ads that are in fact
+// profitable. They should be Hassan's numbers, and ideally editable rather than
+// compiled in.
 type VerdictKey = 'scale' | 'keep' | 'watch' | 'kill' | 'learning';
 interface Verdict {
   key: VerdictKey;
@@ -337,16 +359,59 @@ function Thumb({ ad, small }: { ad: Ad; small?: boolean }) {
 }
 
 // ── Client-view modal (the ad as a customer sees it) ───────────────────────────
-function ClientPreview({ ad, onClose, mock }: { ad: Ad; onClose: () => void; mock: boolean }) {
+function ClientPreview({
+  ad,
+  onClose,
+  mock,
+  creativesLoaded = true,
+}: {
+  ad: Ad;
+  onClose: () => void;
+  mock: boolean;
+  creativesLoaded?: boolean;
+}) {
+  // Three different situations used to render as one message telling the user
+  // to connect Meta — including when Meta was connected and working fine.
+  const creativeMissingNote = mock
+    ? '\u201cConnect Meta to load the real ad copy.\u201d \u2014 this is where the primary text the client reads will appear.'
+    : creativesLoaded
+      ? 'No primary text on this creative.'
+      : 'Meta didn\u2019t return this ad\u2019s creative just now \u2014 the spend and lead figures above are unaffected. Reload to try again.';
   const v = verdict(ad);
   const c = ad.creative;
   const link = c?.linkUrl ?? null;
   const domain = link ? (() => { try { return new URL(link).hostname.replace('www.', ''); } catch { return link; } })() : null;
   const cta = c?.cta ?? (ad.resultType === 'instant_form' ? 'Sign Up' : 'Learn More');
 
+  // Escape closes it, and the page behind stops scrolling while it's open —
+  // without that, scrolling over the backdrop moved the list underneath.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-start md:items-center justify-center bg-black/50 p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-gym-surface w-full max-w-4xl rounded-2xl shadow-2xl my-4 grid md:grid-cols-2 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    // The panel used to be unbounded in height inside a centred, scrolling
+    // backdrop — so on any screen shorter than the content it overflowed, and
+    // centring pushed the top of the dialog above the viewport where it could
+    // not be scrolled back to. The panel now caps at the viewport and scrolls
+    // its own content instead.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-3 sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Client view of ${ad.name}`}
+        className="bg-gym-surface w-full max-w-4xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl shadow-2xl grid md:grid-cols-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Left — the ad as a client sees it */}
         <div className="bg-gray-50 p-6 border-b md:border-b-0 md:border-r border-gym-border">
           <p className="text-gym-muted text-xs uppercase tracking-wider mb-3">Client view · Facebook / Instagram feed</p>
@@ -362,7 +427,7 @@ function ClientPreview({ ad, onClose, mock }: { ad: Ad; onClose: () => void; moc
             </div>
             {/* Primary text */}
             <p className="px-3 pb-2.5 text-gym-text text-sm whitespace-pre-line">
-              {c?.body || (mock ? '“Connect Meta to load the real ad copy.” — this is where the primary text the client reads will appear.' : 'No primary text on this creative.')}
+              {c?.body || creativeMissingNote}
             </p>
             {/* Media */}
             <div className="aspect-square bg-gray-100">
@@ -656,10 +721,16 @@ export default function MetaAdsPage() {
                   {data.campaigns.map((c) => (
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${c.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+                        <a
+                          href={adsManagerUrl('campaigns', data.account.id, c.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`Open "${c.name}" in Meta Ads Manager`}
+                          className="flex items-center gap-2 hover:underline"
+                        >
+                          <span className={`w-2 h-2 rounded-full flex-none ${c.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
                           <span className="text-gym-text font-medium">{c.name}</span>
-                        </div>
+                        </a>
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-gym-text">{aud(c.spend)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-gym-text">{c.leads}</td>
@@ -678,7 +749,7 @@ export default function MetaAdsPage() {
       {/* Ad grid */}
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-gym-text font-semibold">Ads — ranked by verdict</h2>
-        <p className="text-gym-muted text-xs">Click any ad to view it as a client &amp; read its verdict</p>
+        <p className="text-gym-muted text-xs">Click any ad to open it in Meta Ads Manager · hover for Preview</p>
       </div>
 
       {loading ? (
@@ -690,37 +761,72 @@ export default function MetaAdsPage() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
           {adsRanked.map(({ ad, v }) => (
-            <button
+            // Card container is inert. The link wraps the card's content
+            // normally — no absolute overlay — and the Preview button is a
+            // SIBLING, because a <button> inside an <a> is invalid HTML.
+            //
+            // The Preview button is small, cornered and ALWAYS VISIBLE. It was
+            // briefly a hover-reveal chip spanning the middle of the tile, which
+            // meant an invisible-but-still-clickable target swallowed clicks
+            // meant for the link — opacity:0 hides a control, it does not
+            // disable it.
+            <div
               key={ad.id}
-              onClick={() => setOpenAd(ad)}
-              className="group bg-gym-surface border border-gym-border rounded-xl overflow-hidden text-left hover:shadow-lg hover:border-gym-accent/40 transition-all"
+              className="relative bg-gym-surface border border-gym-border rounded-xl overflow-hidden hover:shadow-lg hover:border-gym-accent/40 transition-all"
             >
-              <div className="aspect-[4/3] bg-gray-100 relative">
-                <Thumb ad={ad} small />
-                <span className={`absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full font-semibold border ${v.cls}`}>{v.label}</span>
-                <span className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-semibold ${STATUS_CLS[ad.status] ?? 'bg-gray-100 text-gray-500'}`}>{statusLabel(ad.status)}</span>
-                <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">{ad.format === 'video' ? '▶ Video' : '▦ Image'}</span>
-              </div>
-              <div className="p-3">
-                <p className="text-gym-text text-sm font-semibold truncate">{ad.name}</p>
-                <p className="text-gym-muted text-[11px] truncate mb-2">{ad.campaignName}</p>
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-gym-muted text-[10px] uppercase tracking-wide">Cost/lead</p>
-                    <p className="text-gym-text text-base font-bold tabular-nums">{ad.cpl == null ? '—' : aud(ad.cpl)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-gym-muted text-[10px] uppercase tracking-wide">Leads · Spend</p>
-                    <p className="text-gym-text-secondary text-xs tabular-nums">{ad.leads} · {aud(ad.spend, 0)}</p>
+              <a
+                href={adsManagerUrl('ads', data?.account.id ?? '', ad.id)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open "${ad.name}" in Meta Ads Manager`}
+                className="block"
+              >
+                <div className="aspect-[4/3] bg-gray-100 relative">
+                  <Thumb ad={ad} small />
+                  <span className={`absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full font-semibold border ${v.cls}`}>{v.label}</span>
+                  <span className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-semibold ${STATUS_CLS[ad.status] ?? 'bg-gray-100 text-gray-500'}`}>{statusLabel(ad.status)}</span>
+                  <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">{ad.format === 'video' ? '▶ Video' : '▦ Image'}</span>
+                </div>
+                <div className="p-3">
+                  <p className="text-gym-text text-sm font-semibold truncate">{ad.name}</p>
+                  <p className="text-gym-muted text-[11px] truncate mb-2">{ad.campaignName}</p>
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-gym-muted text-[10px] uppercase tracking-wide">Cost/lead</p>
+                      <p className="text-gym-text text-base font-bold tabular-nums">{ad.cpl == null ? '—' : aud(ad.cpl)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gym-muted text-[10px] uppercase tracking-wide">Leads · Spend</p>
+                      <p className="text-gym-text-secondary text-xs tabular-nums">{ad.leads} · {aud(ad.spend, 0)}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </button>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setOpenAd(ad)}
+                title="See this ad the way a client sees it"
+                // Sits directly under the verdict chip at top-2. Positioned from
+                // the TOP because the card's footer height varies with content,
+                // so anything measured from the bottom drifts between tiles.
+                className="absolute top-9 left-2 z-10 bg-white/95 text-gym-text text-[10px] font-semibold px-2 py-0.5 rounded border border-gym-border shadow-sm hover:bg-white"
+              >
+                Preview
+              </button>
+            </div>
           ))}
         </div>
       )}
 
-      {openAd && <ClientPreview ad={openAd} mock={data?.tokenPending ?? false} onClose={() => setOpenAd(null)} />}
+      {openAd && (
+        <ClientPreview
+          ad={openAd}
+          mock={data?.tokenPending ?? false}
+          creativesLoaded={data?.creativesLoaded ?? true}
+          onClose={() => setOpenAd(null)}
+        />
+      )}
     </div>
   );
 }

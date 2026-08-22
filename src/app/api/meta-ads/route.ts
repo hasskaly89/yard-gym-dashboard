@@ -38,6 +38,158 @@ async function graph<T = unknown>(path: string, params: Record<string, string>):
   return json as T;
 }
 
+// How many days each window covers — used to size requests to the window
+// instead of always asking for the largest one.
+const RANGE_DAYS: Record<string, number> = { last_7d: 7, last_30d: 30, last_90d: 90 };
+
+// Graph caps a multi-object `?ids=` read at 50.
+const IDS_PER_CALL = 50;
+
+// Runaway guard on pagination, not a real ceiling: 10 x 500 rows is far more
+// ads than this account will run in a 90-day window.
+const MAX_PAGES = 10;
+
+// Keep this list LIGHT. Commit a6c1839 fixed a "Please reduce the amount of data
+// you're asking for" error caused by requesting object_story_spec and
+// asset_feed_spec across many ads — do not reintroduce them here.
+const AD_FIELDS =
+  'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type}';
+
+type AdRow = { id: string; name: string; effective_status: string; creative?: GraphCreative };
+
+// Follow paging.next to exhaustion. Without this an account with more ad rows
+// than one page silently reports partial spend — the page looks fine and the
+// numbers are just quietly wrong.
+async function graphPaged<T>(path: string, params: Record<string, string>): Promise<T[]> {
+  const first = await graph<{ data: T[]; paging?: { next?: string } }>(path, params);
+  const out: T[] = [...(first.data ?? [])];
+  let next = first.paging?.next;
+  for (let i = 1; i < MAX_PAGES && next; i++) {
+    const res = await fetch(next, { cache: 'no-store' });
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      throw new Error(json.error?.message || `Graph paging error ${res.status}`);
+    }
+    out.push(...(json.data ?? []));
+    next = json.paging?.next;
+  }
+  return out;
+}
+
+// Ad entities (status + creative) for EXACTLY the ads that delivered in this
+// window.
+//
+// This was `act_<id>/ads?limit=100` with NO date filter — the whole account
+// history, oldest first. As the account grew, the ads actually on screen fell
+// outside those arbitrary 100, so the lookup missed and they rendered with
+// status UNKNOWN and no creative, which made the preview tell you to connect
+// Meta on an account that was already connected.
+//
+// Now the request volume scales with ads on screen rather than account age.
+async function fetchAdEntities(
+  adIds: string[],
+): Promise<{ byId: Map<string, AdRow>; complete: boolean }> {
+  const byId = new Map<string, AdRow>();
+  if (adIds.length === 0) return { byId, complete: true };
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < adIds.length; i += IDS_PER_CALL) {
+    chunks.push(adIds.slice(i, i + IDS_PER_CALL));
+  }
+
+  // Fail soft PER CHUNK — creatives are decoration, spend and leads are the
+  // point, so one bad chunk costs a few thumbnails rather than the whole page.
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      graph<Record<string, AdRow>>('', { ids: chunk.join(','), fields: AD_FIELDS })
+        .then((res) => ({ ok: true as const, res }))
+        .catch((err) => {
+          console.error('Meta Ads creative chunk failed (numbers unaffected):', err);
+          return { ok: false as const, res: {} as Record<string, AdRow> };
+        }),
+    ),
+  );
+
+  let complete = true;
+  for (const r of results) {
+    if (!r.ok) {
+      complete = false;
+      continue;
+    }
+    for (const [id, row] of Object.entries(r.res)) {
+      if (row && typeof row === 'object' && row.id) byId.set(id, row);
+    }
+  }
+  return { byId, complete };
+}
+
+type InsightTotals = {
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  leads: number;
+};
+
+type TotalsRow = {
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  clicks?: string;
+  actions?: Array<{ action_type: string; value: string }>;
+};
+
+// Account-level totals for the window.
+//
+// Needed because REACH CANNOT BE SUMMED. Reach counts de-duplicated PEOPLE, so
+// adding per-ad reach counts anyone who saw three of your ads three times — the
+// Reach figure on this page has been inflated for exactly that reason. Meta
+// de-duplicates properly when asked at account level.
+async function fetchAccountTotals(act: string, range: string): Promise<InsightTotals | null> {
+  const rows = await graph<{ data: TotalsRow[] }>(`${act}/insights`, {
+    level: 'account',
+    date_preset: range,
+    limit: '1',
+    fields: 'spend,impressions,reach,clicks,actions',
+  });
+  const r = rows.data?.[0];
+  if (!r) return null;
+  return {
+    spend: Number(r.spend || 0),
+    impressions: Number(r.impressions || 0),
+    reach: Number(r.reach || 0),
+    clicks: Number(r.clicks || 0),
+    leads: sumLeads(r.actions),
+  };
+}
+
+// Per-campaign figures straight from Meta, for the same de-duplication reason as
+// above — rolling reach up from the ad rows overstates every campaign row.
+async function fetchCampaignTotals(
+  act: string,
+  range: string,
+): Promise<Map<string, InsightTotals>> {
+  type Row = TotalsRow & { campaign_id?: string };
+  const rows = await graphPaged<Row>(`${act}/insights`, {
+    level: 'campaign',
+    date_preset: range,
+    limit: '200',
+    fields: 'campaign_id,spend,impressions,reach,clicks,actions',
+  });
+  const out = new Map<string, InsightTotals>();
+  for (const r of rows) {
+    if (!r.campaign_id) continue;
+    out.set(r.campaign_id, {
+      spend: Number(r.spend || 0),
+      impressions: Number(r.impressions || 0),
+      reach: Number(r.reach || 0),
+      clicks: Number(r.clicks || 0),
+      leads: sumLeads(r.actions),
+    });
+  }
+  return out;
+}
+
 const LEAD_ACTION_TYPES = new Set([
   'offsite_conversion.fb_pixel_lead',
   'leadgen.other',
@@ -47,16 +199,20 @@ const LEAD_ACTION_TYPES = new Set([
 
 function sumLeads(actions: Array<{ action_type: string; value: string }> | undefined): number {
   if (!actions) return 0;
-  // Prefer the dedicated lead-form / pixel-lead counters; fall back to generic "lead".
   const pick = (t: string) =>
     actions.filter((a) => a.action_type === t).reduce((s, a) => s + Number(a.value || 0), 0);
-  return (
-    pick('offsite_conversion.fb_pixel_lead') ||
-    pick('leadgen.other') ||
-    pick('onsite_web_lead') ||
-    pick('lead') ||
-    0
-  );
+
+  // These three are DISTINCT lead sources and one ad can produce more than one
+  // (a website pixel lead and an on-Facebook instant form, say). This used to be
+  // a `||` chain, which reported whichever was found first and silently dropped
+  // the rest — undercounting leads, which in turn inflates cost-per-lead and can
+  // flip an ad's verdict from Keep to Kill.
+  const specific =
+    pick('offsite_conversion.fb_pixel_lead') + pick('leadgen.other') + pick('onsite_web_lead');
+
+  // `lead` is Meta's roll-up ACROSS those counters, not a fourth source. It is a
+  // fallback and never an addend — adding it would double-count every lead.
+  return specific > 0 ? specific : pick('lead');
 }
 
 function resultTypeFromActions(
@@ -153,11 +309,13 @@ async function fetchDaily(act: string, range: string): Promise<DailyPoint[]> {
     clicks?: string;
     actions?: Array<{ action_type: string; value: string }>;
   };
+  // One row per day, so the window's length IS the row count. Hardcoding 90 made
+  // a 7-day view ask for 90 rows, and left no headroom at all on the 90-day one.
   const res = await graph<{ data: DailyRow[] }>(`${act}/insights`, {
     level: 'account',
     date_preset: range,
     time_increment: '1',
-    limit: '90',
+    limit: String((RANGE_DAYS[range] ?? 30) + 5),
     fields: 'spend,impressions,clicks,actions',
   });
   return res.data
@@ -218,28 +376,15 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     cpm?: string;
     actions?: Array<{ action_type: string; value: string }>;
   };
-  type AdRow = { id: string; name: string; effective_status: string; creative?: GraphCreative };
-  const [insights, adsResp, daily, platforms] = await Promise.all([
-    graph<{ data: InsightRow[] }>(`${act}/insights`, {
+  const [insightRows, daily, platforms, accountTotals, campaignTotals] = await Promise.all([
+    // Paged — the old flat `limit: 500` silently truncated past 500 ad rows,
+    // which understates spend without any visible sign that it happened.
+    graphPaged<InsightRow>(`${act}/insights`, {
       level: 'ad',
       date_preset: range,
       limit: '500',
       fields:
         'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions',
-    }),
-    // 2) Ad entities for status + creative (only for ads that have insight rows).
-    // Meta rejects oversized requests with "Please reduce the amount of data
-    // you're asking for" — 500 ads x full creative payloads (object_story_spec
-    // and asset_feed_spec are large) crosses that line as the account grows.
-    // Smaller page, and FAIL SOFT: creatives are decoration, spend and leads
-    // are the point, so a creative hiccup must not drop the page to snapshot.
-    graph<{ data: AdRow[] }>(`${act}/ads`, {
-      limit: '100',
-      fields:
-        'id,name,effective_status,creative{id,body,title,image_url,thumbnail_url,object_type,video_id,link_url,call_to_action_type}',
-    }).catch((err) => {
-      console.error('Meta Ads creative fetch failed (numbers unaffected):', err);
-      return { data: [] as AdRow[] };
     }),
     // Chart data is supplementary — fail soft so a breakdown hiccup never
     // takes down the core numbers/ads above.
@@ -251,10 +396,23 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
       console.error('Meta Ads platform breakdown fetch failed:', err);
       return [] as PlatformBreakdown[];
     }),
+    fetchAccountTotals(act, range).catch((err) => {
+      console.error('Meta Ads account totals fetch failed:', err);
+      return null;
+    }),
+    fetchCampaignTotals(act, range).catch((err) => {
+      console.error('Meta Ads campaign totals fetch failed:', err);
+      return new Map<string, InsightTotals>();
+    }),
   ]);
-  const adMeta = new Map(adsResp.data.map((a) => [a.id, a]));
 
-  const ads: MetaAd[] = insights.data
+  // Ad entities come AFTER the insights, because the whole point is to ask for
+  // only the ads those insights name.
+  const { byId: adMeta, complete: creativesLoaded } = await fetchAdEntities(
+    [...new Set(insightRows.map((r) => r.ad_id))],
+  );
+
+  const ads: MetaAd[] = insightRows
     .map((row): MetaAd => {
       const meta = adMeta.get(row.ad_id);
       const spend = Number(row.spend || 0);
@@ -286,12 +444,21 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     .filter((a) => a.impressions > 0 || a.spend > 0)
     .sort((a, b) => b.spend - a.spend);
 
-  // 3) Roll up campaigns from the ad rows.
+  // 3) Campaign rows.
+  //
+  // Identity (name, status) is rolled up from the ad rows, but the FIGURES come
+  // from Meta's own campaign-level insights where available. Summing per-ad
+  // reach into a campaign total double-counts anyone who saw two ads in it —
+  // reach is de-duplicated people, not an additive quantity. The roll-up
+  // survives only as a fallback for when that call fails.
   const byCampaign = new Map<string, MetaCampaign>();
   for (const a of ads) {
     const c = byCampaign.get(a.campaignId) ?? {
       id: a.campaignId,
       name: a.campaignName,
+      // TODO: hardcoded. The real objective is never fetched, so a traffic or
+      // awareness campaign is mislabelled here AND judged on cost-per-lead by
+      // the verdict engine, which is the wrong yardstick for it.
       objective: 'OUTCOME_LEADS',
       status: a.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED',
       spend: 0,
@@ -313,24 +480,42 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     byCampaign.set(a.campaignId, c);
   }
   const campaigns = [...byCampaign.values()]
-    .map((c) => ({
-      ...c,
-      ctr: c.impressions ? (c.clicks / c.impressions) * 100 : 0,
-      cpc: c.clicks ? c.spend / c.clicks : null,
-      cpm: c.impressions ? (c.spend / c.impressions) * 1000 : 0,
-      cpl: c.leads ? c.spend / c.leads : null,
-    }))
+    .map((c) => {
+      const authoritative = campaignTotals.get(c.id);
+      const merged = authoritative ? { ...c, ...authoritative } : c;
+      return {
+        ...merged,
+        ctr: merged.impressions ? (merged.clicks / merged.impressions) * 100 : 0,
+        cpc: merged.clicks ? merged.spend / merged.clicks : null,
+        cpm: merged.impressions ? (merged.spend / merged.impressions) * 1000 : 0,
+        cpl: merged.leads ? merged.spend / merged.leads : null,
+      };
+    })
     .sort((a, b) => b.spend - a.spend);
 
-  const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
-  const totalLeads = campaigns.reduce((s, c) => s + c.leads, 0);
-  const totalImpressions = campaigns.reduce((s, c) => s + c.impressions, 0);
-  const totalReach = campaigns.reduce((s, c) => s + c.reach, 0);
-  const totalClicks = campaigns.reduce((s, c) => s + c.clicks, 0);
+  // Account totals likewise come from Meta directly, for the same reason: only
+  // Meta can de-duplicate reach across every ad that ran.
+  const summed = {
+    spend: campaigns.reduce((s, c) => s + c.spend, 0),
+    leads: campaigns.reduce((s, c) => s + c.leads, 0),
+    impressions: campaigns.reduce((s, c) => s + c.impressions, 0),
+    clicks: campaigns.reduce((s, c) => s + c.clicks, 0),
+  };
+  const totalSpend = accountTotals?.spend ?? summed.spend;
+  const totalLeads = accountTotals?.leads ?? summed.leads;
+  const totalImpressions = accountTotals?.impressions ?? summed.impressions;
+  const totalClicks = accountTotals?.clicks ?? summed.clicks;
+  // No honest fallback for reach — summing it is the bug. Null renders as "—",
+  // which is the truth when Meta didn't answer, rather than an inflated number.
+  const totalReach = accountTotals?.reach ?? null;
 
   return {
     mock: false,
     tokenPending: false,
+    // Whether every creative actually came back. Without this the UI can't tell
+    // "this ad has no primary text" from "we failed to load creatives", and it
+    // used to resolve that ambiguity by telling a connected user to connect Meta.
+    creativesLoaded,
     account: { id: ACCOUNT_ID, name: ACCOUNT_NAME, currency: 'AUD' },
     range,
     rangeLabel: RANGE_LABELS[range] ?? range,

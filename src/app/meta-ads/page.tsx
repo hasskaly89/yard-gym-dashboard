@@ -383,9 +383,35 @@ function ClientPreview({
   const domain = link ? (() => { try { return new URL(link).hostname.replace('www.', ''); } catch { return link; } })() : null;
   const cta = c?.cta ?? (ad.resultType === 'instant_form' ? 'Sign Up' : 'Learn More');
 
+  // Escape closes it, and the page behind stops scrolling while it's open —
+  // without that, scrolling over the backdrop moved the list underneath.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-start md:items-center justify-center bg-black/50 p-4 overflow-y-auto" onClick={onClose}>
-      <div className="bg-gym-surface w-full max-w-4xl rounded-2xl shadow-2xl my-4 grid md:grid-cols-2 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    // The panel used to be unbounded in height inside a centred, scrolling
+    // backdrop — so on any screen shorter than the content it overflowed, and
+    // centring pushed the top of the dialog above the viewport where it could
+    // not be scrolled back to. The panel now caps at the viewport and scrolls
+    // its own content instead.
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-3 sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Client view of ${ad.name}`}
+        className="bg-gym-surface w-full max-w-4xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl shadow-2xl grid md:grid-cols-2"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Left — the ad as a client sees it */}
         <div className="bg-gray-50 p-6 border-b md:border-b-0 md:border-r border-gym-border">
           <p className="text-gym-muted text-xs uppercase tracking-wider mb-3">Client view · Facebook / Instagram feed</p>
@@ -735,53 +761,59 @@ export default function MetaAdsPage() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
           {adsRanked.map(({ ad, v }) => (
-            // The card is a plain container: the whole-tile link and the Preview
-            // button are SIBLINGS, because a <button> nested inside an <a> is
-            // invalid HTML and browsers handle it inconsistently.
+            // Card container is inert. The link wraps the card's content
+            // normally — no absolute overlay — and the Preview button is a
+            // SIBLING, because a <button> inside an <a> is invalid HTML.
+            //
+            // The Preview button is small, cornered and ALWAYS VISIBLE. It was
+            // briefly a hover-reveal chip spanning the middle of the tile, which
+            // meant an invisible-but-still-clickable target swallowed clicks
+            // meant for the link — opacity:0 hides a control, it does not
+            // disable it.
             <div
               key={ad.id}
-              className="group relative bg-gym-surface border border-gym-border rounded-xl overflow-hidden hover:shadow-lg hover:border-gym-accent/40 transition-all"
+              className="relative bg-gym-surface border border-gym-border rounded-xl overflow-hidden hover:shadow-lg hover:border-gym-accent/40 transition-all"
             >
               <a
                 href={adsManagerUrl('ads', data?.account.id ?? '', ad.id)}
                 target="_blank"
                 rel="noopener noreferrer"
                 title={`Open "${ad.name}" in Meta Ads Manager`}
-                className="absolute inset-0 z-0"
+                className="block"
               >
-                <span className="sr-only">Open {ad.name} in Meta Ads Manager</span>
+                <div className="aspect-[4/3] bg-gray-100 relative">
+                  <Thumb ad={ad} small />
+                  <span className={`absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full font-semibold border ${v.cls}`}>{v.label}</span>
+                  <span className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-semibold ${STATUS_CLS[ad.status] ?? 'bg-gray-100 text-gray-500'}`}>{statusLabel(ad.status)}</span>
+                  <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">{ad.format === 'video' ? '▶ Video' : '▦ Image'}</span>
+                </div>
+                <div className="p-3">
+                  <p className="text-gym-text text-sm font-semibold truncate">{ad.name}</p>
+                  <p className="text-gym-muted text-[11px] truncate mb-2">{ad.campaignName}</p>
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className="text-gym-muted text-[10px] uppercase tracking-wide">Cost/lead</p>
+                      <p className="text-gym-text text-base font-bold tabular-nums">{ad.cpl == null ? '—' : aud(ad.cpl)}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-gym-muted text-[10px] uppercase tracking-wide">Leads · Spend</p>
+                      <p className="text-gym-text-secondary text-xs tabular-nums">{ad.leads} · {aud(ad.spend, 0)}</p>
+                    </div>
+                  </div>
+                </div>
               </a>
 
-              <div className="aspect-[4/3] bg-gray-100 relative pointer-events-none">
-                <Thumb ad={ad} small />
-                <span className={`absolute top-2 left-2 text-[11px] px-2 py-0.5 rounded-full font-semibold border ${v.cls}`}>{v.label}</span>
-                <span className={`absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded font-semibold ${STATUS_CLS[ad.status] ?? 'bg-gray-100 text-gray-500'}`}>{statusLabel(ad.status)}</span>
-                <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">{ad.format === 'video' ? '▶ Video' : '▦ Image'}</span>
-              </div>
-
-              {/* Above the link surface so it wins the click. */}
               <button
                 type="button"
                 onClick={() => setOpenAd(ad)}
-                className="absolute top-2 left-1/2 -translate-x-1/2 z-10 opacity-0 group-hover:opacity-100 focus:opacity-100 bg-white/95 text-gym-text text-[11px] font-semibold px-2.5 py-1 rounded-full border border-gym-border shadow-sm transition-opacity"
+                title="See this ad the way a client sees it"
+                // Sits directly under the verdict chip at top-2. Positioned from
+                // the TOP because the card's footer height varies with content,
+                // so anything measured from the bottom drifts between tiles.
+                className="absolute top-9 left-2 z-10 bg-white/95 text-gym-text text-[10px] font-semibold px-2 py-0.5 rounded border border-gym-border shadow-sm hover:bg-white"
               >
                 Preview
               </button>
-
-              <div className="p-3 pointer-events-none">
-                <p className="text-gym-text text-sm font-semibold truncate">{ad.name}</p>
-                <p className="text-gym-muted text-[11px] truncate mb-2">{ad.campaignName}</p>
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-gym-muted text-[10px] uppercase tracking-wide">Cost/lead</p>
-                    <p className="text-gym-text text-base font-bold tabular-nums">{ad.cpl == null ? '—' : aud(ad.cpl)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-gym-muted text-[10px] uppercase tracking-wide">Leads · Spend</p>
-                    <p className="text-gym-text-secondary text-xs tabular-nums">{ad.leads} · {aud(ad.spend, 0)}</p>
-                  </div>
-                </div>
-              </div>
             </div>
           ))}
         </div>

@@ -71,6 +71,12 @@ export interface PlatformBreakdown {
 export interface MetaAdsData {
   mock: boolean;
   tokenPending: boolean;
+  /**
+   * True when every ad creative was fetched successfully. Lets the UI separate
+   * "this ad genuinely has no copy" from "the creative fetch failed" — it used
+   * to conflate both with "Meta isn't connected".
+   */
+  creativesLoaded?: boolean;
   account: { id: string; name: string; currency: string };
   range: string;
   rangeLabel: string;
@@ -79,7 +85,12 @@ export interface MetaAdsData {
     spend: number;
     leads: number;
     impressions: number;
-    reach: number;
+    /**
+     * De-duplicated people, straight from Meta's account-level insights.
+     * Null when Meta didn't answer — deliberately NOT back-filled by summing
+     * per-ad reach, which counts anyone who saw several ads several times.
+     */
+    reach: number | null;
     clicks: number;
     ctr: number;
     cpc: number | null;

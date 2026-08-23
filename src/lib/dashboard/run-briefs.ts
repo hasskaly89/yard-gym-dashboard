@@ -28,16 +28,26 @@ export type BriefRunResult = {
   error?: string;
 };
 
-// Business (Workspace) inbox uses Google OAuth — app passwords are disabled
-// org-wide there. Personal keeps the simpler IMAP + app-password path.
-// Returns null when the scope's inbox isn't connected yet.
+// OAuth first for BOTH inboxes, IMAP as a fallback for personal.
+//
+// Business has to use OAuth — the Yard's Workspace disables app passwords
+// org-wide. Personal used to be IMAP-only, which meant connecting it required
+// someone to paste a Gmail App Password into Vercel by hand; that sat undone
+// for over a week, partly because the password is 19 characters INCLUDING two
+// spaces and Vercel silently trims it to a valid-looking 16 (see
+// NEXT-SESSION.md). The OAuth path is already scope-generic, so personal can
+// now be connected with a click instead.
+//
+// The IMAP fallback stays for the case where an app password is already
+// configured and working — connecting over OAuth simply takes precedence.
+// Returns null when the scope's inbox isn't connected either way.
 async function fetchEmailsForScope(
   scope: 'personal' | 'business',
 ): Promise<FetchedEmail[] | null> {
-  if (scope === 'business') {
-    if (!(await isOAuthConnected('business'))) return null;
-    return fetchRecentEmailsOAuth('business', { sinceDays: 3, max: 40 });
+  if (await isOAuthConnected(scope)) {
+    return fetchRecentEmailsOAuth(scope, { sinceDays: 3, max: 40 });
   }
+  if (scope === 'business') return null;
   const acct = emailAccountFor('personal');
   if (!acct) return null;
   return fetchRecentEmails(acct, { sinceDays: 3, max: 40 });
@@ -143,8 +153,11 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
       const candidates = replyCheckCandidates(emails, ownerAddresses);
       let repliedIds = new Set<string>();
       try {
-        if (scope === 'business') {
-          repliedIds = await findRepliedMessageIdsOAuth('business', candidates, ownerAddresses);
+        // Must mirror fetchEmailsForScope's transport choice — otherwise a
+        // personal inbox connected over OAuth would fall to the IMAP branch,
+        // find no app password, and silently never detect a reply.
+        if (await isOAuthConnected(scope)) {
+          repliedIds = await findRepliedMessageIdsOAuth(scope, candidates, ownerAddresses);
         } else if (candidates.length > 0) {
           const acct = emailAccountFor('personal');
           if (acct) repliedIds = await findRepliedMessageIds(acct, { sinceDays: 14 });

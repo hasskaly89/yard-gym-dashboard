@@ -77,6 +77,8 @@ export interface MetaAdsData {
    * to conflate both with "Meta isn't connected".
    */
   creativesLoaded?: boolean;
+  /** True when the figures cover only campaigns that are currently running. */
+  activeOnly?: boolean;
   account: { id: string; name: string; currency: string };
   range: string;
   rangeLabel: string;

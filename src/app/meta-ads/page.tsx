@@ -56,6 +56,7 @@ interface MetaAdsData {
   mock: boolean;
   tokenPending: boolean;
   creativesLoaded?: boolean;
+  activeOnly?: boolean;
   account: { id: string; name: string; currency: string };
   range: string;
   rangeLabel: string;
@@ -513,17 +514,20 @@ const RANGES = [
 
 export default function MetaAdsPage() {
   const [range, setRange] = useState('last_30d');
+  // Active-only by default — this page is for deciding what to do about what's
+  // running now, and paused history buries it.
+  const [activeOnly, setActiveOnly] = useState(true);
   const [data, setData] = useState<MetaAdsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [openAd, setOpenAd] = useState<Ad | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/meta-ads?range=${range}`)
+    fetch(`/api/meta-ads?range=${range}&active=${activeOnly ? '1' : '0'}`)
       .then((r) => r.json())
       .then(setData)
       .finally(() => setLoading(false));
-  }, [range]);
+  }, [range, activeOnly]);
 
   const adsRanked = useMemo(() => {
     if (!data) return [];
@@ -545,6 +549,7 @@ export default function MetaAdsPage() {
           <h1 className="text-2xl font-bold text-gym-text">Meta Ads</h1>
           <p className="text-gym-muted text-sm mt-1">
             {data?.account.name ?? 'The Yard Gym'} · Facebook &amp; Instagram · {data?.rangeLabel ?? '…'}
+            {data && !data.tokenPending && (activeOnly ? ' · active campaigns only' : ' · all campaigns')}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -564,6 +569,26 @@ export default function MetaAdsPage() {
                 </button>
               );
             })}
+          </div>
+          <div className="flex bg-gym-surface border border-gym-border rounded-lg p-0.5">
+            {([
+              { key: true, label: 'Active only' },
+              { key: false, label: 'All' },
+            ] as const).map((opt) => (
+              <button
+                key={String(opt.key)}
+                onClick={() => setActiveOnly(opt.key)}
+                disabled={data?.tokenPending ?? false}
+                title={
+                  data?.tokenPending
+                    ? 'Connect Meta to filter by campaign status'
+                    : 'Filters every figure on this page, not just the tables'
+                }
+                className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${activeOnly === opt.key ? 'bg-gym-accent text-white' : 'text-gym-text-secondary hover:text-gym-text disabled:text-gym-muted/50'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
           <span className={`text-xs px-3 py-1 rounded-full font-medium ${loading ? 'bg-yellow-500/10 text-yellow-600' : data?.tokenPending ? 'bg-blue-500/10 text-blue-600' : 'bg-green-500/10 text-green-600'}`}>
             {loading ? 'Loading…' : data?.tokenPending ? 'Sample Data' : 'Live'}

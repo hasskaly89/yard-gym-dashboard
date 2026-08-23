@@ -38,6 +38,20 @@ async function graph<T = unknown>(path: string, params: Record<string, string>):
   return json as T;
 }
 
+// Restrict every insights call to campaigns that are actually running.
+// Verified format: an array of {field, operator, value} evaluation specs.
+// Applied to ALL the insights calls rather than filtering client-side, so the
+// stat cards, the charts and the tables can never disagree about what they are
+// counting — and so de-duplicated reach is computed by Meta over the same
+// subset that is on screen.
+const ACTIVE_CAMPAIGNS_FILTER = JSON.stringify([
+  { field: 'campaign.effective_status', operator: 'IN', value: ['ACTIVE'] },
+]);
+
+function scopeParams(activeOnly: boolean): Record<string, string> {
+  return activeOnly ? { filtering: ACTIVE_CAMPAIGNS_FILTER } : {};
+}
+
 // How many days each window covers — used to size requests to the window
 // instead of always asking for the largest one.
 const RANGE_DAYS: Record<string, number> = { last_7d: 7, last_30d: 30, last_90d: 90 };
@@ -145,12 +159,13 @@ type TotalsRow = {
 // adding per-ad reach counts anyone who saw three of your ads three times — the
 // Reach figure on this page has been inflated for exactly that reason. Meta
 // de-duplicates properly when asked at account level.
-async function fetchAccountTotals(act: string, range: string): Promise<InsightTotals | null> {
+async function fetchAccountTotals(act: string, range: string, activeOnly: boolean): Promise<InsightTotals | null> {
   const rows = await graph<{ data: TotalsRow[] }>(`${act}/insights`, {
     level: 'account',
     date_preset: range,
     limit: '1',
     fields: 'spend,impressions,reach,clicks,actions',
+    ...scopeParams(activeOnly),
   });
   const r = rows.data?.[0];
   if (!r) return null;
@@ -168,6 +183,7 @@ async function fetchAccountTotals(act: string, range: string): Promise<InsightTo
 async function fetchCampaignTotals(
   act: string,
   range: string,
+  activeOnly: boolean,
 ): Promise<Map<string, InsightTotals>> {
   type Row = TotalsRow & { campaign_id?: string };
   const rows = await graphPaged<Row>(`${act}/insights`, {
@@ -175,6 +191,7 @@ async function fetchCampaignTotals(
     date_preset: range,
     limit: '200',
     fields: 'campaign_id,spend,impressions,reach,clicks,actions',
+    ...scopeParams(activeOnly),
   });
   const out = new Map<string, InsightTotals>();
   for (const r of rows) {
@@ -301,7 +318,7 @@ function extractCreative(c: GraphCreative | undefined): MetaAd['creative'] {
 }
 
 // Day-by-day spend/leads trend, for the performance-over-time chart.
-async function fetchDaily(act: string, range: string): Promise<DailyPoint[]> {
+async function fetchDaily(act: string, range: string, activeOnly: boolean): Promise<DailyPoint[]> {
   type DailyRow = {
     date_start: string;
     spend?: string;
@@ -317,6 +334,7 @@ async function fetchDaily(act: string, range: string): Promise<DailyPoint[]> {
     time_increment: '1',
     limit: String((RANGE_DAYS[range] ?? 30) + 5),
     fields: 'spend,impressions,clicks,actions',
+    ...scopeParams(activeOnly),
   });
   return res.data
     .map((row) => ({
@@ -330,7 +348,7 @@ async function fetchDaily(act: string, range: string): Promise<DailyPoint[]> {
 }
 
 // Facebook vs Instagram (vs Audience Network / Messenger) split.
-async function fetchPlatforms(act: string, range: string): Promise<PlatformBreakdown[]> {
+async function fetchPlatforms(act: string, range: string, activeOnly: boolean): Promise<PlatformBreakdown[]> {
   type PlatformRow = {
     publisher_platform?: string;
     spend?: string;
@@ -344,6 +362,7 @@ async function fetchPlatforms(act: string, range: string): Promise<PlatformBreak
     breakdowns: 'publisher_platform',
     limit: '20',
     fields: 'spend,impressions,clicks,actions',
+    ...scopeParams(activeOnly),
   });
   return res.data
     .map((row) => ({
@@ -357,7 +376,7 @@ async function fetchPlatforms(act: string, range: string): Promise<PlatformBreak
 }
 
 // ── Live fetch ────────────────────────────────────────────────────────────────
-async function fetchLive(range: string): Promise<MetaAdsData> {
+async function fetchLive(range: string, activeOnly: boolean): Promise<MetaAdsData> {
   const act = `act_${ACCOUNT_ID}`;
 
   // 1) Ad-level insights for the window.
@@ -385,22 +404,23 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
       limit: '500',
       fields:
         'ad_id,ad_name,campaign_id,campaign_name,spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions',
+      ...scopeParams(activeOnly),
     }),
     // Chart data is supplementary — fail soft so a breakdown hiccup never
     // takes down the core numbers/ads above.
-    fetchDaily(act, range).catch((err) => {
+    fetchDaily(act, range, activeOnly).catch((err) => {
       console.error('Meta Ads daily trend fetch failed:', err);
       return [] as DailyPoint[];
     }),
-    fetchPlatforms(act, range).catch((err) => {
+    fetchPlatforms(act, range, activeOnly).catch((err) => {
       console.error('Meta Ads platform breakdown fetch failed:', err);
       return [] as PlatformBreakdown[];
     }),
-    fetchAccountTotals(act, range).catch((err) => {
+    fetchAccountTotals(act, range, activeOnly).catch((err) => {
       console.error('Meta Ads account totals fetch failed:', err);
       return null;
     }),
-    fetchCampaignTotals(act, range).catch((err) => {
+    fetchCampaignTotals(act, range, activeOnly).catch((err) => {
       console.error('Meta Ads campaign totals fetch failed:', err);
       return new Map<string, InsightTotals>();
     }),
@@ -516,6 +536,7 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
     // "this ad has no primary text" from "we failed to load creatives", and it
     // used to resolve that ambiguity by telling a connected user to connect Meta.
     creativesLoaded,
+    activeOnly,
     account: { id: ACCOUNT_ID, name: ACCOUNT_NAME, currency: 'AUD' },
     range,
     rangeLabel: RANGE_LABELS[range] ?? range,
@@ -542,6 +563,10 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const rangeParam = url.searchParams.get('range') ?? 'last_30d';
   const range = VALID_RANGES.has(rangeParam) ? rangeParam : 'last_30d';
+  // Defaults to active-only: the page is for deciding what to do about ads that
+  // are running right now, and paused history just buries them. `active=0`
+  // opts back into everything that delivered in the window.
+  const activeOnly = url.searchParams.get('active') !== '0';
 
   if (!TOKEN) {
     // Snapshot is a fixed 30-day capture — keep its own label so the range
@@ -549,14 +574,17 @@ export async function GET(request: Request) {
     return NextResponse.json(buildSnapshot());
   }
 
-  const hit = cache.get(range);
+  // Cache key includes the scope — otherwise flipping the toggle serves the
+  // other view's numbers for up to five minutes.
+  const cacheKey = `${range}:${activeOnly ? 'active' : 'all'}`;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.ts < CACHE_TTL) {
     return NextResponse.json({ ...hit.data, cached: true });
   }
 
   try {
-    const data = await fetchLive(range);
-    cache.set(range, { data, ts: Date.now() });
+    const data = await fetchLive(range, activeOnly);
+    cache.set(cacheKey, { data, ts: Date.now() });
     return NextResponse.json(data);
   } catch (error) {
     console.error('Meta Ads API error:', error);

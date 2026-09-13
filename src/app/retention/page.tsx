@@ -26,6 +26,8 @@ interface RetentionMember {
   prior30d: number;
   last7d: number;
   prior7d: number;
+  last56d: number;
+  prior56d: number;
   trend: number;
   ghlContactId: string | null;
   healthScore: number;
@@ -93,7 +95,7 @@ const COLUMN_DEFS: ColumnDef[] = [
   {
     key: 'STABLE',
     label: 'Stable',
-    hint: 'Holding pace vs. last month',
+    hint: 'Holding pace vs. prior 8 weeks',
     text: 'text-emerald-700',
     bar: 'bg-emerald-500',
     pill: 'bg-emerald-50 text-emerald-700',
@@ -136,12 +138,20 @@ const COLUMN_DEFS: ColumnDef[] = [
   },
 ];
 
+// Visits per week over the given span, to one decimal — the same unit the
+// score reasons use.
+function perWeek(visits: number, days: number): string {
+  return (Math.round((visits / (days / 7)) * 10) / 10).toFixed(1);
+}
+
+// Reads off the SAME 8-week windows the column is decided by, so a card can
+// never sit in Sliding while claiming it is up on last month.
 function trendLabel(m: RetentionMember): string {
-  if (m.last30d === 0) return 'No visits in 30d';
-  if (m.prior30d === 0) return 'New activity';
+  if (m.last56d === 0) return 'No visits in 8 weeks';
+  if (m.prior56d === 0) return 'New activity';
   const pct = Math.round((m.trend - 1) * 100);
-  if (pct === 0) return 'Same as last month';
-  return pct > 0 ? `↑ ${pct}% vs last month` : `↓ ${Math.abs(pct)}% vs last month`;
+  if (pct === 0) return 'Holding pace';
+  return pct > 0 ? `↑ ${pct}% vs prior 8wks` : `↓ ${Math.abs(pct)}% vs prior 8wks`;
 }
 
 function MemberCard({
@@ -242,7 +252,9 @@ function MemberCard({
       </div>
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-xs text-gray-500">
-          {member.prior30d} → <span className="text-gray-900 font-medium">{member.last30d}</span> visits
+          {perWeek(member.prior56d, 56)} →{' '}
+          <span className="text-gray-900 font-medium">{perWeek(member.last56d, 56)}</span>{' '}
+          visits/wk
         </p>
         <p className={`text-xs font-semibold ${col.text}`}>{trendLabel(member)}</p>
       </div>
@@ -384,6 +396,10 @@ function MemberDrawer({
           )}
 
           <div className="grid grid-cols-2 gap-3">
+            <DrawerStat
+              label="Visits/week (8wk vs prior 8wk)"
+              value={`${perWeek(member.prior56d, 56)} → ${perWeek(member.last56d, 56)}`}
+            />
             <DrawerStat label="Visits (30d)" value={`${member.prior30d} → ${member.last30d}`} />
             <DrawerStat label="Visits (7d)" value={`${member.prior7d} → ${member.last7d}`} />
             <DrawerStat
@@ -587,7 +603,7 @@ export default function RetentionPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Retention</h1>
           <p className="text-gray-500 text-sm mt-1">
-            Active members grouped by attendance trend (last 30d vs. prior 30d) · click a name to open their MindBody profile
+            Active members grouped by attendance trend (last 8 weeks vs. the 8 before) · click a name to open their MindBody profile
           </p>
         </div>
         <span

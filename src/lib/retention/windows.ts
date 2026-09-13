@@ -9,24 +9,42 @@ export type VisitWindows = {
   prior7: number;
   last30: number;
   prior30: number;
+  // The 8-week pair is what drives classification. 30-vs-30 is too short to
+  // tell "recovering from a quiet month" apart from "leaving": a member who
+  // trained twice in a bad month and three times in a worse one reads as +50%.
+  // Eight weeks against the eight before it is the window Recovr compares on,
+  // and it is long enough that one holiday cannot invert the verdict.
+  last56: number;
+  prior56: number;
 };
 
-// Tallies last-7 / prior-7 / last-30 / prior-30 day visit counts for the given
-// member ids from member_visits, over a 60-day lookback.
+const DAY = 86400000;
+
+// Tallies visit counts for the given member ids from member_visits, over a
+// 112-day lookback: 7/30-day pairs for display, 56-day pairs for scoring.
 export async function tallyVisitWindows(
   supabase: SupabaseClient,
   ids: string[],
 ): Promise<Map<string, VisitWindows>> {
   const nowMs = Date.now();
-  const last7Start = nowMs - 7 * 86400000;
-  const last14Start = nowMs - 14 * 86400000;
-  const last30Start = nowMs - 30 * 86400000;
-  const last60Start = nowMs - 60 * 86400000;
-  const sinceIso = new Date(last60Start).toISOString();
+  const last7Start = nowMs - 7 * DAY;
+  const last14Start = nowMs - 14 * DAY;
+  const last30Start = nowMs - 30 * DAY;
+  const last60Start = nowMs - 60 * DAY;
+  const last56Start = nowMs - 56 * DAY;
+  const last112Start = nowMs - 112 * DAY;
+  const sinceIso = new Date(last112Start).toISOString();
 
   const counts = new Map<string, VisitWindows>();
   for (const id of ids) {
-    counts.set(id, { last7: 0, prior7: 0, last30: 0, prior30: 0 });
+    counts.set(id, {
+      last7: 0,
+      prior7: 0,
+      last30: 0,
+      prior30: 0,
+      last56: 0,
+      prior56: 0,
+    });
   }
   if (ids.length === 0) return counts;
 
@@ -54,6 +72,8 @@ export async function tallyVisitWindows(
       else if (ts >= last14Start) bucket.prior7++;
       if (ts >= last30Start) bucket.last30++;
       else if (ts >= last60Start) bucket.prior30++;
+      if (ts >= last56Start) bucket.last56++;
+      else bucket.prior56++; // sinceIso already floors this at 112 days
     }
 
     if (rows.length < PAGE) break;

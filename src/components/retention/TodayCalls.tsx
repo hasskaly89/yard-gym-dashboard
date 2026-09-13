@@ -18,6 +18,8 @@ export type TodayCallsMember = {
   trendCategory: Band;
   last30d: number;
   prior30d: number;
+  last56d: number;
+  prior56d: number;
   ghlContactId: string | null;
 };
 
@@ -36,6 +38,10 @@ function declinePct(last: number, prior: number): number | null {
   if (prior <= 0) return null;
   const pct = Math.round(((prior - last) / prior) * 100);
   return pct;
+}
+
+function perWeek(visits: number, days: number): string {
+  return (Math.round((visits / (days / 7)) * 10) / 10).toFixed(1);
 }
 
 const ghlContactDetailUrl = (
@@ -98,8 +104,8 @@ export default function TodayCalls({
           member: m,
           score: priorityScore({
             band: m.trendCategory,
-            visitsCurrent: m.last30d,
-            visitsPrior: m.prior30d,
+            visitsCurrent: m.last56d,
+            visitsPrior: m.prior56d,
             daysSinceLastContact: c ? daysSince(c.contactedAt) : null,
           }),
         };
@@ -157,7 +163,7 @@ export default function TodayCalls({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
           {top.map((m) => {
             const c = contacts[m.id];
-            const pct = declinePct(m.last30d, m.prior30d);
+            const pct = declinePct(m.last56d, m.prior56d);
             const showGhl = Boolean(
               ghlLocationId && ghlPortalUrl && m.ghlContactId,
             );
@@ -185,9 +191,11 @@ export default function TodayCalls({
                 </div>
 
                 <p className="text-xs text-gray-600 mb-1">
-                  {m.prior30d} →{' '}
-                  <span className="text-gray-900 font-medium">{m.last30d}</span>{' '}
-                  visits
+                  {perWeek(m.prior56d, 56)} →{' '}
+                  <span className="text-gray-900 font-medium">
+                    {perWeek(m.last56d, 56)}
+                  </span>{' '}
+                  visits/wk
                   {pct !== null && pct > 0 && (
                     <span className="text-rose-600 font-medium">
                       {' '}

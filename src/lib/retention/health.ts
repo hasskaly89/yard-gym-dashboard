@@ -18,6 +18,8 @@ export type ScoredMember = {
   daysSinceLastVisit: number | null;
   last30: number;
   prior30: number;
+  last56: number;
+  prior56: number;
 };
 
 type PaidRow = {
@@ -47,13 +49,22 @@ export async function computeScoresForPaidMembers(
   const windows = await tallyVisitWindows(supabase, ids);
 
   return rows.map((r) => {
-    const w = windows.get(r.mindbody_client_id) ?? { last7: 0, prior7: 0, last30: 0, prior30: 0 };
+    const w = windows.get(r.mindbody_client_id) ?? {
+      last7: 0,
+      prior7: 0,
+      last30: 0,
+      prior30: 0,
+      last56: 0,
+      prior56: 0,
+    };
     const dslv = daysSinceSydney(r.last_visit_date);
     const { score, band, reasons } = computeHealthScore({
       last7: w.last7,
       prior7: w.prior7,
       last30: w.last30,
       prior30: w.prior30,
+      last56: w.last56,
+      prior56: w.prior56,
       daysSinceLastVisit: dslv,
       totalVisitCount: r.total_visit_count ?? 0,
     });
@@ -67,6 +78,8 @@ export async function computeScoresForPaidMembers(
       daysSinceLastVisit: dslv,
       last30: w.last30,
       prior30: w.prior30,
+      last56: w.last56,
+      prior56: w.prior56,
     };
   });
 }

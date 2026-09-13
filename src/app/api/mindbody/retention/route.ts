@@ -32,6 +32,8 @@ type RetentionMember = {
   prior30d: number;
   last7d: number;
   prior7d: number;
+  last56d: number;
+  prior56d: number;
   trend: number;
   ghlContactId: string | null;
   // Health layer (Recovr parity)
@@ -44,19 +46,52 @@ type RetentionMember = {
   membershipStartDate: string | null;
 };
 
-// Trend-based classification — unchanged thresholds so the board looks the same.
-function classify(last30: number, prior30: number): TrendCategory {
-  if (last30 === 0) return 'STOPPED';
-  if (prior30 < 2) {
-    if (last30 >= 8) return 'STABLE';
-    if (last30 >= 4) return 'SLOWING';
-    return 'SLIDING';
-  }
-  const trend = last30 / prior30;
-  if (trend >= 0.85) return 'STABLE';
-  if (trend >= 0.55) return 'SLOWING';
-  if (trend >= 0.25) return 'SLIDING';
-  return 'STOPPED';
+const SEVERITY: Record<TrendCategory, number> = {
+  STABLE: 0,
+  SLOWING: 1,
+  SLIDING: 2,
+  STOPPED: 3,
+};
+
+// Classification is a trend ratio over 8 weeks, floored by how long it has
+// actually been since the member turned up.
+//
+// The ratio alone cannot be trusted, because both of its windows lag. A member
+// who stopped a fortnight ago still carries a month of earlier visits in his
+// "recent" window, so the ratio can read as healthy — or even improving — while
+// he is halfway out the door. The recency floor is what stops that: a ratio may
+// make the verdict worse, never better than the member's actual absence allows.
+function classify(
+  last56: number,
+  prior56: number,
+  daysSinceLastVisit: number | null,
+): TrendCategory {
+  if (daysSinceLastVisit === null || daysSinceLastVisit >= 30) return 'STOPPED';
+
+  const byTrend = ((): TrendCategory => {
+    if (last56 === 0) return 'STOPPED';
+    if (prior56 < 4) {
+      if (last56 >= 16) return 'STABLE';
+      if (last56 >= 8) return 'SLOWING';
+      return 'SLIDING';
+    }
+    const trend = last56 / prior56;
+    if (trend >= 0.85) return 'STABLE';
+    if (trend >= 0.55) return 'SLOWING';
+    if (trend >= 0.25) return 'SLIDING';
+    return 'STOPPED';
+  })();
+
+  // ...and the mirror of that floor. A ratio only carries information near the
+  // bottom: someone still averaging 2+ sessions a week who trained this week is
+  // not "slowing" in any sense a phone call helps, however their last 8 weeks
+  // compare to a heavier 8 before it. Without this the board demotes its most
+  // committed members for ordinary variation and buries the real leavers.
+  if (daysSinceLastVisit <= 7 && last56 >= 16) return 'STABLE';
+
+  // Two weeks absent is already at-risk regardless of what the ratio says.
+  const floor: TrendCategory = daysSinceLastVisit >= 14 ? 'SLIDING' : 'STABLE';
+  return SEVERITY[byTrend] >= SEVERITY[floor] ? byTrend : floor;
 }
 
 type PaidMemberRow = {
@@ -129,15 +164,21 @@ export async function GET() {
       prior7: 0,
       last30: 0,
       prior30: 0,
+      last56: 0,
+      prior56: 0,
     };
+    // Trend is the 8-week ratio the board classifies on, so the percentage on
+    // the card and the column it sits in can never disagree.
     const trend =
-      c.prior30 > 0 ? Math.min(c.last30 / c.prior30, 2) : c.last30 > 0 ? 1 : 0;
+      c.prior56 > 0 ? Math.min(c.last56 / c.prior56, 2) : c.last56 > 0 ? 1 : 0;
     const dslv = daysSinceSydney(m.last_visit_date);
     const health = computeHealthScore({
       last7: c.last7,
       prior7: c.prior7,
       last30: c.last30,
       prior30: c.prior30,
+      last56: c.last56,
+      prior56: c.prior56,
       daysSinceLastVisit: dslv,
       totalVisitCount: m.total_visit_count ?? 0,
     });
@@ -147,11 +188,13 @@ export async function GET() {
       lastName: m.last_name ?? '',
       email: m.email ?? '',
       mobilePhone: m.phone ?? '',
-      trendCategory: classify(c.last30, c.prior30),
+      trendCategory: classify(c.last56, c.prior56, dslv),
       last30d: c.last30,
       prior30d: c.prior30,
       last7d: c.last7,
       prior7d: c.prior7,
+      last56d: c.last56,
+      prior56d: c.prior56,
       trend: Math.round(trend * 100) / 100,
       ghlContactId: m.ghl_contact_id ?? null,
       healthScore: health.score,

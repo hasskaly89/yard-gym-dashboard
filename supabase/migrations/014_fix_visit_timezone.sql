@@ -1,3 +1,16 @@
+-- ###################################################################
+-- ## APPLIED 2026-08-21. DO NOT RUN AGAIN — SEE 015.               ##
+-- ##                                                               ##
+-- ## This shifted the WHOLE table, but only the rows written on    ##
+-- ## Vercel (runtime zone UTC) were actually broken. Rows written  ##
+-- ## by a sync run from a laptop (runtime zone Australia/Sydney)   ##
+-- ## were already correct and this pushed them 10 hours into the   ##
+-- ## past — 5,742 rows, and 885 duplicate visits. Repaired by      ##
+-- ## 015_repair_double_shifted_visits.sql.                         ##
+-- ##                                                               ##
+-- ## Kept for the record. Retained below only as history.          ##
+-- ###################################################################
+--
 -- Correct visit timestamps that were stored as Sydney wall clock labelled UTC.
 --
 -- MindBody returns StartDateTime as a naive local datetime ("2026-08-21T17:30:00").

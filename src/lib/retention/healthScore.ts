@@ -15,9 +15,17 @@ export type HealthSignals = {
   prior7: number;
   last30: number;
   prior30: number;
+  last56: number;
+  prior56: number;
   daysSinceLastVisit: number | null; // null = no visit on record
   totalVisitCount: number;
 };
+
+// Visits per week, to one decimal — the unit the reasons and the AI narrative
+// speak in ("0.6/week, down from 1.5"), because a raw 8-week count means
+// nothing to whoever is about to make the call.
+export const perWeek = (visits: number, days: number): number =>
+  Math.round((visits / (days / 7)) * 10) / 10;
 
 export type HealthResult = {
   score: number; // 0-100, higher = healthier
@@ -35,16 +43,20 @@ const RECENCY_PENALTY = (days: number | null): number => {
   return 65;
 };
 
-const TREND_PENALTY = (last30: number, prior30: number): number => {
-  if (prior30 < 2) {
-    // Not enough prior history for a ratio — judge on recent volume alone.
-    if (last30 >= 8) return 0;
-    if (last30 >= 4) return 8;
-    if (last30 >= 1) return 18;
+// Measured over 8 weeks vs the 8 before it — see the note on VisitWindows for
+// why 30-vs-30 was the wrong window. Ratio thresholds are unchanged; only the
+// span they are measured over is longer.
+const TREND_PENALTY = (last56: number, prior56: number): number => {
+  if (prior56 < 4) {
+    // Below ~0.5 visits/week there is no baseline worth taking a ratio
+    // against — judge on recent volume alone.
+    if (last56 >= 16) return 0;
+    if (last56 >= 8) return 8;
+    if (last56 >= 1) return 18;
     return 40;
   }
-  if (last30 === 0) return 42;
-  const ratio = last30 / prior30;
+  if (last56 === 0) return 42;
+  const ratio = last56 / prior56;
   if (ratio >= 0.85) return 0;
   if (ratio >= 0.55) return 8;
   if (ratio >= 0.25) return 20;
@@ -69,7 +81,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 
 export function computeHealthScore(s: HealthSignals): HealthResult {
   const recency = RECENCY_PENALTY(s.daysSinceLastVisit);
-  const trend = TREND_PENALTY(s.last30, s.prior30);
+  const trend = TREND_PENALTY(s.last56, s.prior56);
   const frequency = FREQUENCY_PENALTY(s.last30);
 
   const score = clamp(Math.round(100 - (recency + trend + frequency)), 0, 100);
@@ -87,12 +99,15 @@ export function computeHealthScore(s: HealthSignals): HealthResult {
     });
   }
 
-  if (s.last30 === 0 && s.prior30 > 0) {
-    drivers.push({ weight: trend, text: `Stopped attending — 0 sessions in the last 30 days (was ${s.prior30})` });
-  } else if (s.prior30 >= 2 && s.last30 < s.prior30) {
+  if (s.last56 === 0 && s.prior56 > 0) {
     drivers.push({
       weight: trend,
-      text: `Attendance down: ${s.last30} sessions in last 30d vs ${s.prior30} the month before`,
+      text: `Stopped attending — 0 sessions in the last 8 weeks (was ${perWeek(s.prior56, 56)}/week)`,
+    });
+  } else if (s.prior56 >= 4 && s.last56 < s.prior56) {
+    drivers.push({
+      weight: trend,
+      text: `Attendance down to ${perWeek(s.last56, 56)}/week from ${perWeek(s.prior56, 56)}/week over the 8 weeks before`,
     });
   }
 

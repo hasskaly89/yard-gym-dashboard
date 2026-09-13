@@ -1,4 +1,5 @@
 import { getAnthropic, RETENTION_AI_MODEL } from './client';
+import { perWeek } from '@/lib/retention/healthScore';
 import type { ScoredMember } from '@/lib/retention/health';
 
 // Generates the Recovr-style "why they're at risk + what to do" blurb for a
@@ -30,6 +31,10 @@ export async function generateRetentionSummary(
     daysSinceLastVisit: m.daysSinceLastVisit,
     sessionsLast30Days: m.last30,
     sessionsPrior30Days: m.prior30,
+    // The 8-week rates are what the score actually judges on, and they are the
+    // phrasing staff find legible on a call ("0.6 a week, down from 1.5").
+    visitsPerWeekNow: perWeek(m.last56, 56),
+    visitsPerWeekPrior8Weeks: perWeek(m.prior56, 56),
     recentStaffNotes: m.recentNotes ?? [],
     lastContactedDaysAgo: m.lastContactDaysAgo ?? null,
   };

@@ -4,7 +4,12 @@ import {
   syncMemberMemberships,
   type MembershipSyncScope,
 } from '@/lib/mindbody/active-memberships';
-import { syncMemberVisitCounts, type VisitSyncMode } from '@/lib/mindbody/sync-visits';
+import {
+  syncMemberVisitCounts,
+  visitSyncMeta,
+  type VisitSyncMode,
+  type VisitSyncResult,
+} from '@/lib/mindbody/sync-visits';
 import { resetMBCallCount, getMBCallCount } from '@/lib/mindbody/api';
 import { markRun } from '@/lib/mindbody/sync-state';
 import { computeScoresForPaidMembers } from '@/lib/retention/health';
@@ -51,6 +56,7 @@ export async function POST(req: NextRequest) {
   const limit = body.limit;
 
   const result: Record<string, unknown> = { steps, mode, limit: limit ?? null };
+  let visitRun: VisitSyncResult | null = null;
   let totalCalls = 0;
 
   try {
@@ -73,6 +79,7 @@ export async function POST(req: NextRequest) {
       const visits = await syncMemberVisitCounts({ mode, limit });
       totalCalls += visits.apiCalls;
       result.visits = visits;
+      visitRun = visits;
     }
 
     // Read-only health-score preview — computes scores for all paid members and
@@ -128,7 +135,9 @@ export async function POST(req: NextRequest) {
   // Record cadence only for full (unbounded) runs.
   if (!limit) {
     if (steps.includes('memberships')) await markRun('membership_sync');
-    if (steps.includes('visits')) await markRun('visit_sync');
+    if (steps.includes('visits') && visitRun) {
+      await markRun('visit_sync', visitSyncMeta(visitRun));
+    }
   }
 
   result.totalApiCalls = totalCalls;

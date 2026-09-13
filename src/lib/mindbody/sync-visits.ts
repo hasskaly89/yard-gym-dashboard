@@ -117,21 +117,41 @@ type MemberRow = {
 
 export type VisitSyncMode = 'incremental' | 'backfill';
 
+export type VisitSyncResult = {
+  mode: VisitSyncMode;
+  scanned: number;
+  // Members whose sync promise fulfilled — includes "nothing new for them".
+  updated: number;
+  // Rows genuinely written to member_visits this run.
+  inserted: number;
+  // Raw visit rows MindBody returned across all members, before any filter.
+  visitsSeen: number;
+  membersWithErrors: number;
+  errorSamples: string[];
+  startedAt: string;
+  apiCalls: number;
+  errors: string[];
+  durationMs: number;
+};
+
 export async function syncMemberVisitCounts(opts?: {
   mode?: VisitSyncMode;
   // Cap the number of members processed — used for bounded, low-cost test runs.
   limit?: number;
-}): Promise<{
-  mode: VisitSyncMode;
-  scanned: number;
-  updated: number;
-  apiCalls: number;
-  errors: string[];
-  durationMs: number;
-}> {
+}): Promise<VisitSyncResult> {
   const mode: VisitSyncMode = opts?.mode ?? 'incremental';
   const started = Date.now();
+  const startedAt = new Date(started).toISOString();
   const supabase = createAdminClient();
+  // Three numbers the cron's abort guard cannot do without. `updated` counts
+  // members whose promise settled — a member for whom MindBody returned an
+  // empty list still counts as "updated". On 2026-09-12 every member did
+  // exactly that: zero rows written, `updated` = 214, guard silent, messages
+  // sent on stale data. `visitsSeen` (raw rows before any filter) is the
+  // number that can't be zero on a healthy night, because the 2-day overlap
+  // re-fetches visits we already hold.
+  let inserted = 0;
+  let visitsSeen = 0;
 
   // Restrict the visit sync to paid current members — no point counting visits
   // for trial passes or ex-members, and it cuts MindBody load. Run
@@ -170,6 +190,7 @@ export async function syncMemberVisitCounts(opts?: {
           m.mindbody_client_id,
           startDate,
         );
+        visitsSeen += visits.length;
         const { clean, lastVisit } = filterSignedInClasses(visits);
 
         // Upsert per-visit history. Unique (mindbody_client_id, visit_at) makes
@@ -182,15 +203,17 @@ export async function syncMemberVisitCounts(opts?: {
           }));
           for (let j = 0; j < rows.length; j += 500) {
             const chunk = rows.slice(j, j + 500);
-            const { error: vErr } = await supabase
+            const { data: insertedRows, error: vErr } = await supabase
               .from('member_visits')
               .upsert(chunk, {
                 onConflict: 'mindbody_client_id,visit_at',
                 ignoreDuplicates: true,
-              });
+              })
+              .select('id');
             if (vErr) {
               throw new Error(`${m.mindbody_client_id} visits: ${vErr.message}`);
             }
+            inserted += insertedRows?.length ?? 0;
           }
         }
 
@@ -240,8 +263,31 @@ export async function syncMemberVisitCounts(opts?: {
     mode,
     scanned: members.length,
     updated,
+    inserted,
+    visitsSeen,
+    membersWithErrors: errors.length,
+    errorSamples: errors.slice(0, 5),
+    startedAt,
     apiCalls: getMBCallCount(),
     errors,
     durationMs: Date.now() - started,
+  };
+}
+
+// The subset of a run worth keeping in sync_state.meta — everything except the
+// full per-member error list, which can be hundreds of lines. Hobby logs expire
+// in an hour; this row is what's left to read the next morning.
+export function visitSyncMeta(r: VisitSyncResult): Record<string, unknown> {
+  return {
+    mode: r.mode,
+    startedAt: r.startedAt,
+    scanned: r.scanned,
+    updated: r.updated,
+    inserted: r.inserted,
+    visitsSeen: r.visitsSeen,
+    membersWithErrors: r.membersWithErrors,
+    errorSamples: r.errorSamples,
+    apiCalls: r.apiCalls,
+    durationMs: r.durationMs,
   };
 }

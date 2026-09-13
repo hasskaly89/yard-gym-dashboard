@@ -3,7 +3,15 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { checkBirthday, checkAnniversary, checkInactivity } from '@/lib/milestones/detect'
 import { triggerMilestone } from '@/lib/milestones/trigger'
 import { syncMemberMemberships } from '@/lib/mindbody/active-memberships'
-import { syncMemberVisitCounts } from '@/lib/mindbody/sync-visits'
+import {
+  syncMemberVisitCounts,
+  visitSyncMeta,
+  type VisitSyncResult,
+} from '@/lib/mindbody/sync-visits'
+import {
+  systemicVisitSyncFailure,
+  countVisitsSameWindowLastWeek,
+} from '@/lib/mindbody/visit-sync-guard'
 import { isDue, markRun } from '@/lib/mindbody/sync-state'
 import { runRetentionScoring } from '@/lib/retention/run-scoring'
 import { runBriefs } from '@/lib/dashboard/run-briefs'
@@ -95,12 +103,18 @@ export async function GET(req: NextRequest) {
       durationMs: 0,
     },
     visitSync: {
+      mode: 'incremental',
       scanned: 0,
       updated: 0,
+      inserted: 0,
+      visitsSeen: 0,
+      membersWithErrors: 0,
+      errorSamples: [],
+      startedAt,
       apiCalls: 0,
-      errors: [] as string[],
+      errors: [],
       durationMs: 0,
-    },
+    } as VisitSyncResult,
     scoring: {
       scored: 0,
       high: 0,
@@ -117,6 +131,29 @@ export async function GET(req: NextRequest) {
     apiCalls: 0,
     estimatedCostUsd: 0,
     errors: [] as string[],
+  }
+
+  // Every exit path writes its outcome to sync_state.cron_last_result. The
+  // response body was the only record of what a run did, and Hobby keeps logs
+  // for an hour — so a 7am failure was unreadable by breakfast.
+  const recordCronResult = async (extra: Record<string, unknown>) => {
+    try {
+      await markRun('cron_last_result', {
+        startedAt,
+        ...extra,
+        errors: summary.errors,
+        membershipSync: summary.membershipSync,
+        visitSync: visitSyncMeta(summary.visitSync),
+        scoring: { ...summary.scoring, errors: summary.scoring.errors.slice(0, 5) },
+        birthdays: summary.birthdays,
+        anniversaries: summary.anniversaries,
+        inactivity: summary.inactivity,
+        apiCalls: summary.apiCalls,
+        estimatedCostUsd: summary.estimatedCostUsd,
+      })
+    } catch {
+      // bookkeeping must never stop the job
+    }
   }
 
   // Step 0a: refresh has_paid_membership — expensive (one call/active member),
@@ -148,12 +185,20 @@ export async function GET(req: NextRequest) {
   let visitSyncFailed = false
   try {
     summary.visitSync = await syncMemberVisitCounts({ mode: 'incremental' })
-    await markRun('visit_sync')
-    if (summary.visitSync.scanned > 0 && summary.visitSync.updated === 0) {
+    const v = summary.visitSync
+    const baselineLastWeek = await countVisitsSameWindowLastWeek(supabase, v.startedAt)
+    const reason = systemicVisitSyncFailure(v, baselineLastWeek)
+    if (reason) {
+      // Do NOT stamp visit_sync — the stamp has to mean "the table is current".
       visitSyncFailed = true
-      summary.errors.push(
-        `visit sync: scanned ${summary.visitSync.scanned} members and updated none`,
-      )
+      summary.errors.push(`visit sync: ${reason}`)
+      await markRun('visit_sync_last_failure', {
+        ...visitSyncMeta(v),
+        baselineLastWeek,
+        reason,
+      })
+    } else {
+      await markRun('visit_sync', { ...visitSyncMeta(v), baselineLastWeek })
     }
   } catch (err) {
     visitSyncFailed = true
@@ -191,6 +236,12 @@ export async function GET(req: NextRequest) {
     console.error(
       '[Cron] ABORTED before sending — visit sync failed, last_visit_date is stale',
     )
+    await recordCronResult({
+      ok: false,
+      status: 500,
+      abortedBeforeSend: true,
+      reason: 'visit sync failed — refused to message members on stale last_visit_date',
+    })
     return NextResponse.json(
       {
         ok: false,
@@ -286,6 +337,12 @@ export async function GET(req: NextRequest) {
   if (failed) {
     console.error('[Cron] FAILED with errors:', summary.errors)
   }
+  await recordCronResult({
+    ok: !failed,
+    status: failed ? 500 : 200,
+    abortedBeforeSend: false,
+    scanned: members.length,
+  })
 
   return NextResponse.json(
     {

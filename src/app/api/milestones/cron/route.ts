@@ -100,6 +100,7 @@ export async function GET(req: NextRequest) {
       paid: 0,
       apiCalls: 0,
       errors: [] as string[],
+      detailErrors: [] as string[],
       durationMs: 0,
     },
     visitSync: {

@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { tallyVisitWindows } from './windows';
 import { computeHealthScore, type RiskBand } from './healthScore';
 import { daysSinceSydney } from './dates';
+import { classify, type TrendCategory } from './classify';
 
 // Orchestrates the health-score engine over the paid-member audience. Split so
 // the read+score step is side-effect-free (used for the dry-run preview) and
@@ -20,6 +21,14 @@ export type ScoredMember = {
   prior30: number;
   last56: number;
   prior56: number;
+  last7: number;
+  prior7: number;
+  trendCategory: TrendCategory;
+  // What was stored BEFORE this run — the summariser regenerates only when
+  // something moved, and these are how it knows.
+  prevScore: number | null;
+  prevBand: RiskBand | null;
+  aiSummaryAt: string | null;
 };
 
 type PaidRow = {
@@ -28,6 +37,9 @@ type PaidRow = {
   last_name: string | null;
   last_visit_date: string | null;
   total_visit_count: number | null;
+  health_score: number | null;
+  risk_band: RiskBand | null;
+  ai_summary_at: string | null;
 };
 
 // Read-only: computes a health score for every paid, active member.
@@ -36,7 +48,9 @@ export async function computeScoresForPaidMembers(
 ): Promise<ScoredMember[]> {
   const { data: paid, error } = await supabase
     .from('members')
-    .select('mindbody_client_id, first_name, last_name, last_visit_date, total_visit_count')
+    .select(
+      'mindbody_client_id, first_name, last_name, last_visit_date, total_visit_count, health_score, risk_band, ai_summary_at',
+    )
     .eq('status', 'active')
     .eq('has_paid_membership', true)
     .returns<PaidRow[]>();
@@ -80,6 +94,12 @@ export async function computeScoresForPaidMembers(
       prior30: w.prior30,
       last56: w.last56,
       prior56: w.prior56,
+      last7: w.last7,
+      prior7: w.prior7,
+      trendCategory: classify(w.last56, w.prior56, dslv),
+      prevScore: r.health_score,
+      prevBand: r.risk_band,
+      aiSummaryAt: r.ai_summary_at,
     };
   });
 }
@@ -116,6 +136,51 @@ export async function persistHealthScores(
     }
   }
   return { updated, errors };
+}
+
+// Scores and summaries are only ever WRITTEN for paid, at-risk members, so
+// without this they outlive the situation they describe. Two leaks:
+//   - a member who drops off has_paid_membership keeps a health_score forever
+//     (74 such rows on 2026-09-13) — a trap for any query that reads the
+//     column without also filtering on paid;
+//   - a member who recovers to healthy keeps their at-risk blurb, because the
+//     summariser skips healthy members and so never overwrites it.
+// Runs every night, so both self-heal.
+export async function clearStaleScores(
+  scored: ScoredMember[],
+  supabase = createAdminClient(),
+): Promise<{ ghostScoresCleared: number; summariesCleared: number; errors: string[] }> {
+  const errors: string[] = [];
+
+  const { data: ghosts, error: gErr } = await supabase
+    .from('members')
+    .update({
+      health_score: null,
+      risk_band: null,
+      score_updated_at: null,
+      ai_summary: null,
+      ai_summary_at: null,
+    })
+    .not('health_score', 'is', null)
+    .or('status.neq.active,has_paid_membership.eq.false')
+    .select('mindbody_client_id');
+  if (gErr) errors.push(`clear ghost scores: ${gErr.message}`);
+
+  const recovered = scored
+    .filter((m) => m.band === 'healthy' && m.aiSummaryAt !== null)
+    .map((m) => m.id);
+  let summariesCleared = 0;
+  for (let i = 0; i < recovered.length; i += 100) {
+    const { data, error } = await supabase
+      .from('members')
+      .update({ ai_summary: null, ai_summary_at: null })
+      .in('mindbody_client_id', recovered.slice(i, i + 100))
+      .select('mindbody_client_id');
+    if (error) errors.push(`clear recovered summaries: ${error.message}`);
+    summariesCleared += data?.length ?? 0;
+  }
+
+  return { ghostScoresCleared: ghosts?.length ?? 0, summariesCleared, errors };
 }
 
 export async function computeAndStoreHealthScores(): Promise<{

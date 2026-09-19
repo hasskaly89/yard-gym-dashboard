@@ -1,6 +1,11 @@
 import { createAdminClient } from '@/lib/supabase/admin';
-import { computeScoresForPaidMembers, persistHealthScores } from './health';
-import { generateSummariesForAtRisk } from '@/lib/ai/retention-summary';
+import {
+  computeScoresForPaidMembers,
+  persistHealthScores,
+  clearStaleScores,
+} from './health';
+import { writeDailySnapshots } from './snapshots';
+import { generateSummariesForAtRisk, needsSummary } from '@/lib/ai/retention-summary';
 import type { RiskBand } from './healthScore';
 
 // Full nightly retention pass: score every paid member, persist scores, then
@@ -17,6 +22,11 @@ export async function runRetentionScoring(opts?: {
   healthy: number;
   scoresUpdated: number;
   summariesWritten: number;
+  // At-risk members whose summary was left alone because nothing had moved.
+  summariesSkipped: number;
+  summariesCleared: number;
+  ghostScoresCleared: number;
+  snapshotsWritten: number;
   errors: string[];
   durationMs: number;
 }> {
@@ -27,6 +37,17 @@ export async function runRetentionScoring(opts?: {
   const scored = await computeScoresForPaidMembers(supabase);
   const { updated, errors: scoreErrors } = await persistHealthScores(scored, supabase);
   errors.push(...scoreErrors);
+
+  const cleared = await clearStaleScores(scored, supabase);
+  errors.push(...cleared.errors);
+
+  // History first, summaries second: a snapshot is a Supabase write that cannot
+  // fail for reasons of its own, and must not be lost to an Anthropic timeout.
+  const snapshots = await writeDailySnapshots(scored, supabase);
+  errors.push(...snapshots.errors);
+
+  const atRiskCount = scored.filter((m) => m.band === 'high' || m.band === 'medium').length;
+  const dueCount = scored.filter(needsSummary).length;
 
   let summariesWritten = 0;
   if (opts?.withSummaries !== false) {
@@ -67,6 +88,10 @@ export async function runRetentionScoring(opts?: {
     healthy: tally('healthy'),
     scoresUpdated: updated,
     summariesWritten,
+    summariesSkipped: atRiskCount - dueCount,
+    summariesCleared: cleared.summariesCleared,
+    ghostScoresCleared: cleared.ghostScoresCleared,
+    snapshotsWritten: snapshots.written,
     errors,
     durationMs: Date.now() - started,
   };

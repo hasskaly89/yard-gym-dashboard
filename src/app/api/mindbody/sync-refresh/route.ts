@@ -12,6 +12,7 @@ import {
 } from '@/lib/mindbody/sync-visits';
 import { resetMBCallCount, getMBCallCount } from '@/lib/mindbody/api';
 import { markRun } from '@/lib/mindbody/sync-state';
+import { backfillSnapshots } from '@/lib/retention/snapshots';
 import { computeScoresForPaidMembers } from '@/lib/retention/health';
 import { generateRetentionSummary } from '@/lib/ai/retention-summary';
 import { runRetentionScoring } from '@/lib/retention/run-scoring';
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
     mode?: VisitSyncMode;
     limit?: number;
     scope?: MembershipSyncScope;
+    days?: number; // snapshot-backfill only
   } = {};
   try {
     body = await req.json();
@@ -122,6 +124,15 @@ export async function POST(req: NextRequest) {
 
     // Persist scores for all paid members + AI summaries for at-risk. $0
     // MindBody; a few cents of Anthropic. Requires migration 007.
+    // Replay the scoring engine over the last N days into
+    // member_score_snapshots. Reads member_visits only — $0 MindBody, $0 AI.
+    // Needs migration 016. body: { steps: ["snapshot-backfill"], days?: 90 }
+    if (steps.includes('snapshot-backfill')) {
+      result.snapshotBackfill = await backfillSnapshots(
+        Math.min(Math.max(Number(body.days) || 90, 1), 180),
+      );
+    }
+
     if (steps.includes('score')) {
       result.scoring = await runRetentionScoring();
     }

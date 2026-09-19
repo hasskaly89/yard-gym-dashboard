@@ -50,6 +50,23 @@ export async function generateRetentionSummary(
   return block && block.type === 'text' ? block.text.trim() : null;
 }
 
+// Per-member narratives are the one genuinely expensive thing in the retention
+// system, and rewriting all of them every night bought nothing: most at-risk
+// members are in exactly the state they were in yesterday. Regenerate when the
+// story changed — band flipped, score moved a tier, never written — or when the
+// text is a fortnight old and the "N days ago" inside it has drifted.
+const SCORE_MOVE = 5;
+const MAX_AGE_DAYS = 14;
+
+export function needsSummary(m: ScoredMember): boolean {
+  if (m.band !== 'high' && m.band !== 'medium') return false;
+  if (m.aiSummaryAt === null) return true;
+  if (m.prevBand !== m.band) return true;
+  if (m.prevScore === null || Math.abs(m.score - m.prevScore) >= SCORE_MOVE) return true;
+  const ageDays = (Date.now() - new Date(m.aiSummaryAt).getTime()) / 86400000;
+  return ageDays > MAX_AGE_DAYS;
+}
+
 // Generates summaries for at-risk (high + medium) members only — healthy
 // members don't need a call blurb — with bounded concurrency. Returns a map of
 // member id -> summary. No-ops (empty map) when no API key is set.
@@ -60,7 +77,7 @@ export async function generateSummariesForAtRisk(
   const out = new Map<string, string>();
   if (!getAnthropic()) return out;
 
-  const atRisk = members.filter((m) => m.band === 'high' || m.band === 'medium');
+  const atRisk = members.filter(needsSummary);
   const concurrency = opts?.concurrency ?? 5;
 
   for (let i = 0; i < atRisk.length; i += concurrency) {

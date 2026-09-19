@@ -35,6 +35,7 @@ interface RetentionMember {
   reasons: string[];
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
+  aiSummaryAt: string | null;
 }
 
 // Health-score chip styling by band. Low score = high risk (Recovr-style).
@@ -46,6 +47,18 @@ const HEALTH_STYLE: Record<RiskBand, string> = {
 
 function daysSinceIso(iso: string): number {
   return daysSinceSydney(iso) ?? 0;
+}
+
+// "19 Sep, 7:53 am" in gym time — when the narrative was written, so nobody
+// has to wonder whether "hasn't been in for 63 days" is still true.
+function generatedLabel(iso: string): string {
+  return new Date(iso).toLocaleString('en-AU', {
+    timeZone: 'Australia/Sydney',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function snoozeDateLabel(iso: string): string {
@@ -390,6 +403,11 @@ function MemberDrawer({
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">
                 AI summary
+                {member.aiSummaryAt && (
+                  <span className="font-normal normal-case tracking-normal">
+                    {' · '}Generated {generatedLabel(member.aiSummaryAt)}
+                  </span>
+                )}
               </p>
               <p className="text-sm text-gray-800 leading-relaxed">{member.aiSummary}</p>
             </div>

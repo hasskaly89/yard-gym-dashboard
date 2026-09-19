@@ -19,3 +19,9 @@ export function daysSinceSydney(iso: string | null | undefined): number | null {
 
   return Math.max(0, Math.round((nowMidnight - visitMidnight) / 86400000));
 }
+
+// Sydney calendar date (YYYY-MM-DD) of an instant — the key a daily snapshot
+// is filed under, so a 7:53am run on the 20th is "the 20th" regardless of UTC.
+export function sydneyYmd(d: Date = new Date()): string {
+  return SYDNEY_YMD.format(d);
+}

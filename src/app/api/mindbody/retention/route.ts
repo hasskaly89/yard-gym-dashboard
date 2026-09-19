@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { tallyVisitWindows } from '@/lib/retention/windows';
 import { computeHealthScore, type RiskBand } from '@/lib/retention/healthScore';
 import { daysSinceSydney } from '@/lib/retention/dates';
+import { classify, type TrendCategory } from '@/lib/retention/classify';
 
 // IMPORTANT — cost note (see memory: project_mindbody_api_billing):
 // MindBody bills $0.002 PER API CALL. This endpoint used to recompute the
@@ -19,7 +20,6 @@ const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
 const GHL_PORTAL_URL =
   process.env.GHL_PORTAL_URL ?? 'https://crm.theyardgym.com.au';
 
-type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
 
 type RetentionMember = {
   id: string;
@@ -42,57 +42,10 @@ type RetentionMember = {
   reasons: string[];
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
+  aiSummaryAt: string | null;
   totalVisitCount: number;
   membershipStartDate: string | null;
 };
-
-const SEVERITY: Record<TrendCategory, number> = {
-  STABLE: 0,
-  SLOWING: 1,
-  SLIDING: 2,
-  STOPPED: 3,
-};
-
-// Classification is a trend ratio over 8 weeks, floored by how long it has
-// actually been since the member turned up.
-//
-// The ratio alone cannot be trusted, because both of its windows lag. A member
-// who stopped a fortnight ago still carries a month of earlier visits in his
-// "recent" window, so the ratio can read as healthy — or even improving — while
-// he is halfway out the door. The recency floor is what stops that: a ratio may
-// make the verdict worse, never better than the member's actual absence allows.
-function classify(
-  last56: number,
-  prior56: number,
-  daysSinceLastVisit: number | null,
-): TrendCategory {
-  if (daysSinceLastVisit === null || daysSinceLastVisit >= 30) return 'STOPPED';
-
-  const byTrend = ((): TrendCategory => {
-    if (last56 === 0) return 'STOPPED';
-    if (prior56 < 4) {
-      if (last56 >= 16) return 'STABLE';
-      if (last56 >= 8) return 'SLOWING';
-      return 'SLIDING';
-    }
-    const trend = last56 / prior56;
-    if (trend >= 0.85) return 'STABLE';
-    if (trend >= 0.55) return 'SLOWING';
-    if (trend >= 0.25) return 'SLIDING';
-    return 'STOPPED';
-  })();
-
-  // ...and the mirror of that floor. A ratio only carries information near the
-  // bottom: someone still averaging 2+ sessions a week who trained this week is
-  // not "slowing" in any sense a phone call helps, however their last 8 weeks
-  // compare to a heavier 8 before it. Without this the board demotes its most
-  // committed members for ordinary variation and buries the real leavers.
-  if (daysSinceLastVisit <= 7 && last56 >= 16) return 'STABLE';
-
-  // Two weeks absent is already at-risk regardless of what the ratio says.
-  const floor: TrendCategory = daysSinceLastVisit >= 14 ? 'SLIDING' : 'STABLE';
-  return SEVERITY[byTrend] >= SEVERITY[floor] ? byTrend : floor;
-}
 
 type PaidMemberRow = {
   mindbody_client_id: string;
@@ -106,21 +59,27 @@ type PaidMemberRow = {
   membership_start_date: string | null;
 };
 
-// Reads persisted AI summaries. Wrapped so the board still works BEFORE the
-// 007_health_scores migration adds the column (returns an empty map instead of
-// erroring).
+// Reads persisted AI summaries with the time each was written. Wrapped so the
+// board still works before the 007_health_scores migration (empty map instead
+// of an error).
+type StoredSummary = { summary: string; at: string | null };
+
 async function fetchSummaries(
   supabase: ReturnType<typeof createAdminClient>,
-): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+): Promise<Map<string, StoredSummary>> {
+  const map = new Map<string, StoredSummary>();
   try {
     const { data, error } = await supabase
       .from('members')
-      .select('mindbody_client_id, ai_summary')
+      .select('mindbody_client_id, ai_summary, ai_summary_at')
       .not('ai_summary', 'is', null)
-      .returns<{ mindbody_client_id: string; ai_summary: string | null }[]>();
+      .returns<
+        { mindbody_client_id: string; ai_summary: string | null; ai_summary_at: string | null }[]
+      >();
     if (error || !data) return map;
-    for (const r of data) if (r.ai_summary) map.set(r.mindbody_client_id, r.ai_summary);
+    for (const r of data) {
+      if (r.ai_summary) map.set(r.mindbody_client_id, { summary: r.ai_summary, at: r.ai_summary_at });
+    }
   } catch {
     // column not present yet — fine.
   }
@@ -182,6 +141,8 @@ export async function GET() {
       daysSinceLastVisit: dslv,
       totalVisitCount: m.total_visit_count ?? 0,
     });
+    const atRisk = health.band === 'high' || health.band === 'medium';
+    const stored = summaries.get(m.mindbody_client_id);
     return {
       id: m.mindbody_client_id,
       firstName: m.first_name ?? '',
@@ -201,7 +162,13 @@ export async function GET() {
       riskBand: health.band,
       reasons: health.reasons,
       daysSinceLastVisit: dslv,
-      aiSummary: summaries.get(m.mindbody_client_id) ?? null,
+      // A summary is only written for at-risk members, so one attached to a
+      // member who is healthy RIGHT NOW describes a situation that has ended —
+      // Adam Kicurkis' card said "hasn't been in for 63 days" five days after
+      // he came back. The live band decides; the card falls back to reasons[0],
+      // which is computed on this request and cannot be stale.
+      aiSummary: atRisk ? (stored?.summary ?? null) : null,
+      aiSummaryAt: atRisk ? (stored?.at ?? null) : null,
       totalVisitCount: m.total_visit_count ?? 0,
       membershipStartDate: m.membership_start_date,
     };

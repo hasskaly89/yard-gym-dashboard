@@ -81,3 +81,21 @@ export async function tallyVisitWindows(
 
   return counts;
 }
+
+// Same bucketing as above over visit timestamps already in memory, as of an
+// arbitrary instant. The snapshot backfill replays 90 past days from one fetch
+// instead of ninety.
+export function tallyWindowsAsOf(visitMs: number[], asOfMs: number): VisitWindows {
+  const w: VisitWindows = { last7: 0, prior7: 0, last30: 0, prior30: 0, last56: 0, prior56: 0 };
+  for (const ts of visitMs) {
+    if (ts > asOfMs) continue;
+    const age = asOfMs - ts;
+    if (age < 7 * DAY) w.last7++;
+    else if (age < 14 * DAY) w.prior7++;
+    if (age < 30 * DAY) w.last30++;
+    else if (age < 60 * DAY) w.prior30++;
+    if (age < 56 * DAY) w.last56++;
+    else if (age < 112 * DAY) w.prior56++;
+  }
+  return w;
+}

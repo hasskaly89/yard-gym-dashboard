@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
-type RiskBand = 'healthy' | 'medium' | 'high';
+type RiskBand = 'healthy' | 'medium' | 'high' | 'lost';
 type SortKey = 'risk' | 'name' | 'lastVisit' | 'totalVisits';
 type RecencyKey = 'all' | '7' | '30' | '30+' | 'never';
 
@@ -25,6 +25,7 @@ const RISK_STYLE: Record<RiskBand, string> = {
   healthy: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
   medium: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
   high: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  lost: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
 };
 
 const TREND_STYLE: Record<TrendCategory, string> = {
@@ -34,7 +35,7 @@ const TREND_STYLE: Record<TrendCategory, string> = {
   STOPPED: 'text-rose-400',
 };
 
-const RISK_OPTIONS: RiskBand[] = ['high', 'medium', 'healthy'];
+const RISK_OPTIONS: RiskBand[] = ['high', 'medium', 'healthy', 'lost'];
 const TREND_OPTIONS: TrendCategory[] = ['STABLE', 'SLOWING', 'SLIDING', 'STOPPED'];
 const RECENCY_OPTIONS: { key: RecencyKey; label: string }[] = [
   { key: 'all', label: 'Any time' },
@@ -43,7 +44,7 @@ const RECENCY_OPTIONS: { key: RecencyKey; label: string }[] = [
   { key: '30+', label: '30+ days ago' },
   { key: 'never', label: 'Never visited' },
 ];
-const RISK_ORDER: Record<RiskBand, number> = { high: 0, medium: 1, healthy: 2 };
+const RISK_ORDER: Record<RiskBand, number> = { high: 0, medium: 1, healthy: 2, lost: 3 };
 
 function matchesRecency(days: number | null, bucket: RecencyKey): boolean {
   if (bucket === 'all') return true;

@@ -167,7 +167,7 @@ export async function clearStaleScores(
   if (gErr) errors.push(`clear ghost scores: ${gErr.message}`);
 
   const recovered = scored
-    .filter((m) => m.band === 'healthy' && m.aiSummaryAt !== null)
+    .filter((m) => (m.band === 'healthy' || m.band === 'lost') && m.aiSummaryAt !== null)
     .map((m) => m.id);
   let summariesCleared = 0;
   for (let i = 0; i < recovered.length; i += 100) {
@@ -188,6 +188,7 @@ export async function computeAndStoreHealthScores(): Promise<{
   high: number;
   medium: number;
   healthy: number;
+  lost: number;
   updated: number;
   errors: string[];
   durationMs: number;
@@ -202,6 +203,7 @@ export async function computeAndStoreHealthScores(): Promise<{
     high: tally('high'),
     medium: tally('medium'),
     healthy: tally('healthy'),
+    lost: tally('lost'),
     updated,
     errors,
     durationMs: Date.now() - started,

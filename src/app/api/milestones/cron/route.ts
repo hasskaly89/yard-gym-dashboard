@@ -121,6 +121,7 @@ export async function GET(req: NextRequest) {
       high: 0,
       medium: 0,
       healthy: 0,
+      lost: 0,
       scoresUpdated: 0,
       summariesWritten: 0,
       summariesSkipped: 0,

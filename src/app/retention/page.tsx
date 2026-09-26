@@ -13,7 +13,7 @@ import type {
 } from '@/app/api/retention/contact-state/route';
 
 type TrendCategory = 'STABLE' | 'SLOWING' | 'SLIDING' | 'STOPPED';
-type RiskBand = 'healthy' | 'medium' | 'high';
+type RiskBand = 'healthy' | 'medium' | 'high' | 'lost';
 
 interface RetentionMember {
   id: string;
@@ -43,6 +43,7 @@ const HEALTH_STYLE: Record<RiskBand, string> = {
   healthy: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   medium: 'bg-amber-50 text-amber-700 border-amber-200',
   high: 'bg-rose-50 text-rose-700 border-rose-200',
+  lost: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
 function daysSinceIso(iso: string): number {
@@ -679,7 +680,7 @@ export default function RetentionPage() {
         <span className="text-gray-400 uppercase tracking-wider font-semibold mr-1">
           Risk
         </span>
-        {(['high', 'medium', 'healthy'] as RiskBand[]).map((r) => (
+        {(['high', 'medium', 'healthy', 'lost'] as RiskBand[]).map((r) => (
           <button
             key={r}
             type="button"

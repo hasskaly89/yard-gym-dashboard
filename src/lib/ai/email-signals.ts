@@ -62,7 +62,7 @@ export async function buildVipList(exclude: Set<string> = new Set()): Promise<Vi
     const { data } = await supabase
       .from('members')
       .select('email, risk_band')
-      .eq('risk_band', 'high')
+      .in('risk_band', ['high', 'lost'])
       .not('email', 'is', null)
       .returns<{ email: string | null; risk_band: string }[]>();
     for (const m of data ?? []) {

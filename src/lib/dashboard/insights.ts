@@ -6,7 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 export type MindBodyInsights = {
   activeMembers: number;
-  risk: { high: number; medium: number; healthy: number };
+  risk: { high: number; medium: number; healthy: number; lost: number };
   /** Monday-start week, matching the MindBody Classes report. */
   sessionsThisWeek: number;
   /** Same elapsed slice of last week — the like-for-like comparison. */
@@ -46,10 +46,14 @@ export async function computeMindBodyInsights(): Promise<MindBodyInsights> {
     .returns<MemberRow[]>();
 
   const rows = members ?? [];
-  const risk = { high: 0, medium: 0, healthy: 0 };
+  // 'lost' (30+ days absent) is counted on its own: the else-branch used to be
+  // "healthy", which would have filed 23 long-absent members under healthy the
+  // night the lost band shipped.
+  const risk = { high: 0, medium: 0, healthy: 0, lost: 0 };
   for (const m of rows) {
     if (m.risk_band === 'high') risk.high++;
     else if (m.risk_band === 'medium') risk.medium++;
+    else if (m.risk_band === 'lost') risk.lost++;
     else risk.healthy++;
   }
 

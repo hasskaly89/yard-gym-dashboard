@@ -106,7 +106,7 @@ export async function runBriefs(): Promise<BriefRunResult[]> {
   try {
     const ins = await computeMindBodyInsights();
     gymData =
-      `Active paid members: ${ins.activeMembers}. Retention risk: ${ins.risk.high} high, ${ins.risk.medium} medium, ${ins.risk.healthy} healthy. ` +
+      `Active paid members: ${ins.activeMembers}. Retention risk: ${ins.risk.high} high, ${ins.risk.medium} medium, ${ins.risk.healthy} healthy, ${ins.risk.lost} lost (30+ days absent). ` +
       `Attendance this week (Monday-start): ${ins.sessionsThisWeek} sessions, versus ${ins.sessionsLastWeekToDate} at the same point last week (last week finished on ${ins.sessionsLastWeekFull}). ` +
       `Compare like for like — this week is still in progress, so a lower number is not automatically a decline.`;
     atRisk = ins.atRisk.map((m) => ({ name: m.name, score: m.score, summary: m.summary }));

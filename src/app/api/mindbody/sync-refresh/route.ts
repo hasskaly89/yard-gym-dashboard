@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
     // returns the distribution + worst 10, WITHOUT writing (no migration needed).
     if (steps.includes('score-preview')) {
       const scored = await computeScoresForPaidMembers();
-      const dist = { high: 0, medium: 0, healthy: 0 };
+      const dist = { high: 0, medium: 0, healthy: 0, lost: 0 };
       for (const s of scored) dist[s.band]++;
       const worst = [...scored]
         .sort((a, b) => a.score - b.score)

@@ -20,6 +20,7 @@ export async function runRetentionScoring(opts?: {
   high: number;
   medium: number;
   healthy: number;
+  lost: number;
   scoresUpdated: number;
   summariesWritten: number;
   // At-risk members whose summary was left alone because nothing had moved.
@@ -86,6 +87,7 @@ export async function runRetentionScoring(opts?: {
     high: tally('high'),
     medium: tally('medium'),
     healthy: tally('healthy'),
+    lost: tally('lost'),
     scoresUpdated: updated,
     summariesWritten,
     summariesSkipped: atRiskCount - dueCount,

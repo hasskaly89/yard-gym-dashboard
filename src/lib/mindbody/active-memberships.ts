@@ -52,14 +52,16 @@ type MembershipRow = {
   Program?: { Name?: string | null } | null;
 };
 
-// MembershipId 10 is "Intro Offers" in the MindBody Members report
-// (NEXT-SESSION.md). Class packs are not distinguished yet — that needs a look
-// at real `raw` rows after the first sweep, not a guess.
+// Confirmed against the first sweep's stored rows (2026-09-24, 214 rows):
+// MembershipId 10 is "Intro Offers", 13 is "Class Packs". Every documented
+// field name mapped below was present on every row — zero nulls.
 const INTRO_MEMBERSHIP_ID = 10;
+const CLASS_PACK_MEMBERSHIP_ID = 13;
 
-function kindFor(membershipId: number): 'paid' | 'intro' | 'other' {
+function kindFor(membershipId: number): 'paid' | 'intro' | 'class_pack' | 'other' {
   if (ACTIVE_MEMBERSHIP_IDS.has(membershipId)) return 'paid';
   if (membershipId === INTRO_MEMBERSHIP_ID) return 'intro';
+  if (membershipId === CLASS_PACK_MEMBERSHIP_ID) return 'class_pack';
   return 'other';
 }
 

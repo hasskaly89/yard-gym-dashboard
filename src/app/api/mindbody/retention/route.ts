@@ -43,6 +43,9 @@ type RetentionMember = {
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
   aiSummaryAt: string | null;
+  nextBookingAt: string | null;
+  noShows30: number;
+  lateCancels30: number;
   totalVisitCount: number;
   membershipStartDate: string | null;
 };
@@ -57,6 +60,7 @@ type PaidMemberRow = {
   last_visit_date: string | null;
   total_visit_count: number | null;
   membership_start_date: string | null;
+  next_booking_at: string | null;
 };
 
 // Reads persisted AI summaries with the time each was written. Wrapped so the
@@ -92,7 +96,7 @@ export async function GET() {
   const { data: paidRows, error: paidErr } = await supabase
     .from('members')
     .select(
-      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count, membership_start_date',
+      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count, membership_start_date, next_booking_at',
     )
     .eq('status', 'active')
     .eq('has_paid_membership', true)
@@ -125,6 +129,8 @@ export async function GET() {
       prior30: 0,
       last56: 0,
       prior56: 0,
+      noShows30: 0,
+      lateCancels30: 0,
     };
     // Trend is the 8-week ratio the board classifies on, so the percentage on
     // the card and the column it sits in can never disagree.
@@ -169,6 +175,9 @@ export async function GET() {
       // which is computed on this request and cannot be stale.
       aiSummary: atRisk ? (stored?.summary ?? null) : null,
       aiSummaryAt: atRisk ? (stored?.at ?? null) : null,
+      nextBookingAt: m.next_booking_at ?? null,
+      noShows30: c.noShows30,
+      lateCancels30: c.lateCancels30,
       totalVisitCount: m.total_visit_count ?? 0,
       membershipStartDate: m.membership_start_date,
     };

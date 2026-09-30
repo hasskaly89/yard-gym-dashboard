@@ -16,6 +16,9 @@ export type VisitWindows = {
   // and it is long enough that one holiday cannot invert the verdict.
   last56: number;
   prior56: number;
+  // Missed classes in the last 30 days — the rows the sync used to discard.
+  noShows30: number;
+  lateCancels30: number;
 };
 
 const DAY = 86400000;
@@ -44,6 +47,8 @@ export async function tallyVisitWindows(
       prior30: 0,
       last56: 0,
       prior56: 0,
+      noShows30: 0,
+      lateCancels30: 0,
     });
   }
   if (ids.length === 0) return counts;
@@ -53,12 +58,13 @@ export async function tallyVisitWindows(
   for (let from = 0; ; from += PAGE) {
     const { data: rows, error } = await supabase
       .from('member_visits')
-      .select('mindbody_client_id, visit_at')
+      .select('mindbody_client_id, visit_at, status')
       .in('mindbody_client_id', ids)
       .gte('visit_at', sinceIso)
+      .lte('visit_at', new Date(nowMs).toISOString()) // bookings are ahead of now; never a visit
       .order('visit_at', { ascending: true })
       .range(from, from + PAGE - 1)
-      .returns<{ mindbody_client_id: string; visit_at: string }[]>();
+      .returns<{ mindbody_client_id: string; visit_at: string; status: string }[]>();
 
     if (error) throw new Error(`tallyVisitWindows: ${error.message}`);
     if (!rows || rows.length === 0) break;
@@ -68,6 +74,13 @@ export async function tallyVisitWindows(
       if (!bucket) continue;
       const ts = new Date(r.visit_at).getTime();
       if (Number.isNaN(ts)) continue;
+      if (r.status !== 'attended') {
+        if (ts >= last30Start) {
+          if (r.status === 'no_show') bucket.noShows30++;
+          else if (r.status === 'late_cancelled') bucket.lateCancels30++;
+        }
+        continue;
+      }
       if (ts >= last7Start) bucket.last7++;
       else if (ts >= last14Start) bucket.prior7++;
       if (ts >= last30Start) bucket.last30++;
@@ -86,7 +99,7 @@ export async function tallyVisitWindows(
 // arbitrary instant. The snapshot backfill replays 90 past days from one fetch
 // instead of ninety.
 export function tallyWindowsAsOf(visitMs: number[], asOfMs: number): VisitWindows {
-  const w: VisitWindows = { last7: 0, prior7: 0, last30: 0, prior30: 0, last56: 0, prior56: 0 };
+  const w: VisitWindows = { last7: 0, prior7: 0, last30: 0, prior30: 0, last56: 0, prior56: 0, noShows30: 0, lateCancels30: 0 };
   for (const ts of visitMs) {
     if (ts > asOfMs) continue;
     const age = asOfMs - ts;

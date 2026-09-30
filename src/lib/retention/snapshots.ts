@@ -108,6 +108,7 @@ export async function backfillSnapshots(
       .from('member_visits')
       .select('mindbody_client_id, visit_at')
       .in('mindbody_client_id', ids)
+      .eq('status', 'attended')
       .gte('visit_at', sinceIso)
       .order('visit_at', { ascending: true })
       .range(from, from + PAGE - 1)

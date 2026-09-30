@@ -70,6 +70,8 @@ export async function computeScoresForPaidMembers(
       prior30: 0,
       last56: 0,
       prior56: 0,
+      noShows30: 0,
+      lateCancels30: 0,
     };
     const dslv = daysSinceSydney(r.last_visit_date);
     const { score, band, reasons } = computeHealthScore({

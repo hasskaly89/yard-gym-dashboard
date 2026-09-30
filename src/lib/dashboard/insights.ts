@@ -79,10 +79,12 @@ export async function computeMindBodyInsights(): Promise<MindBodyInsights> {
       supabase
         .from('member_visits')
         .select('visit_at', { count: 'exact', head: true })
+        .eq('status', 'attended')
         .gte('visit_at', weekStart),
       supabase
         .from('member_visits')
         .select('visit_at', { count: 'exact', head: true })
+        .eq('status', 'attended')
         .gte('visit_at', lastWeekStart)
         .lt('visit_at', weekStart),
       // Same elapsed slice of last week — comparing a part-week against a full
@@ -90,6 +92,7 @@ export async function computeMindBodyInsights(): Promise<MindBodyInsights> {
       supabase
         .from('member_visits')
         .select('visit_at', { count: 'exact', head: true })
+        .eq('status', 'attended')
         .gte('visit_at', lastWeekStart)
         .lt('visit_at', sameElapsedLastWeek),
     ]);

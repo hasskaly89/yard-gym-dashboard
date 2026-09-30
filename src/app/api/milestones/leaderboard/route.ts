@@ -123,6 +123,7 @@ export async function GET(req: Request) {
       .from('member_visits')
       .select('mindbody_client_id')
       .in('mindbody_client_id', paidIds)
+      .eq('status', 'attended')
       .gte('visit_at', startUtc.toISOString())
       .lt('visit_at', endUtc.toISOString())
       .order('visit_at', { ascending: true })

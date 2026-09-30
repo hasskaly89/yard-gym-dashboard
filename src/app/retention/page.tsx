@@ -5,7 +5,7 @@ import Link from 'next/link';
 import TodayCalls, { type TodayCallsMember } from '@/components/retention/TodayCalls';
 import LogButton, { type LogOptions } from '@/components/retention/LogButton';
 import { logContact, snoozeMember } from './actions';
-import { daysSinceSydney } from '@/lib/retention/dates';
+import { daysSinceSydney, sydneyYmd } from '@/lib/retention/dates';
 import type {
   ContactInfo,
   ContactStateResponse,
@@ -36,6 +36,9 @@ interface RetentionMember {
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
   aiSummaryAt: string | null;
+  nextBookingAt: string | null;
+  noShows30: number;
+  lateCancels30: number;
 }
 
 // Health-score chip styling by band. Low score = high risk (Recovr-style).
@@ -60,6 +63,21 @@ function generatedLabel(iso: string): string {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+// "Tomorrow 6:50 am" / "Tue 5:00 am" / "12 Oct, 9:30 am", gym time.
+function nextBookingLabel(iso: string): string {
+  const d = new Date(iso);
+  // daysSinceSydney clamps at zero, so it cannot count forward; diff the
+  // Sydney calendar dates directly.
+  const days = Math.round(
+    (Date.parse(`${sydneyYmd(d)}T00:00:00Z`) - Date.parse(`${sydneyYmd()}T00:00:00Z`)) / 86400000,
+  );
+  const time = d.toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' });
+  if (days === 0) return `Today ${time}`;
+  if (days === 1) return `Tomorrow ${time}`;
+  if (days < 7) return `${d.toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', weekday: 'short' })} ${time}`;
+  return `${d.toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', day: 'numeric', month: 'short' })}, ${time}`;
 }
 
 function snoozeDateLabel(iso: string): string {
@@ -426,6 +444,14 @@ function MemberDrawer({
               value={member.daysSinceLastVisit ?? '—'}
             />
             <DrawerStat label="Trend" value={trendLabel(member)} />
+            <DrawerStat
+              label="Next booking"
+              value={member.nextBookingAt ? nextBookingLabel(member.nextBookingAt) : 'None booked'}
+            />
+            <DrawerStat
+              label="Missed (30d)"
+              value={`${member.noShows30} no-show · ${member.lateCancels30} late cancel`}
+            />
           </div>
 
           <div>

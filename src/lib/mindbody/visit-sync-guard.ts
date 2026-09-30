@@ -55,6 +55,7 @@ export async function countVisitsSameWindowLastWeek(
   const { count } = await supabase
     .from('member_visits')
     .select('id', { count: 'exact', head: true })
+    .eq('status', 'attended')
     .gte('visit_at', start.toISOString())
     .lt('visit_at', end.toISOString());
   return count ?? 0;

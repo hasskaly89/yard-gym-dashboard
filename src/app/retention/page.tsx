@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import TaskQueue from '@/components/retention/TaskQueue';
+import MemberTimeline from '@/components/retention/MemberTimeline';
 import type { QueueMember, QueueMembership } from '@/lib/retention/queues';
 import type { ScoreDelta } from '@/lib/retention/scoreDelta';
 import { HEALTH_STYLE } from '@/components/retention/bands';
@@ -496,6 +497,10 @@ function MemberDrawer({
               Snooze 7d
             </button>
           </div>
+          <MemberTimeline
+            memberId={member.id}
+            memberName={`${member.firstName} ${member.lastName}`.trim()}
+          />
         </div>
       </div>
     </div>

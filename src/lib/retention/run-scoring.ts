@@ -5,6 +5,7 @@ import {
   clearStaleScores,
 } from './health';
 import { writeDailySnapshots } from './snapshots';
+import { computeContactResults } from './results';
 import { generateSummariesForAtRisk, needsSummary } from '@/lib/ai/retention-summary';
 import type { RiskBand } from './healthScore';
 
@@ -28,6 +29,7 @@ export async function runRetentionScoring(opts?: {
   summariesCleared: number;
   ghostScoresCleared: number;
   snapshotsWritten: number;
+  resultsWritten: number;
   errors: string[];
   durationMs: number;
 }> {
@@ -46,6 +48,17 @@ export async function runRetentionScoring(opts?: {
   // fail for reasons of its own, and must not be lost to an Anthropic timeout.
   const snapshots = await writeDailySnapshots(scored, supabase);
   errors.push(...snapshots.errors);
+
+  // Did last month's messages work? Settles any 28-day windows that closed
+  // today; reads member_visits only.
+  let resultsWritten = 0;
+  try {
+    const r = await computeContactResults(supabase);
+    resultsWritten = r.written;
+    errors.push(...r.errors);
+  } catch (err) {
+    errors.push(`contact results: ${(err as Error).message}`);
+  }
 
   const atRiskCount = scored.filter((m) => m.band === 'high' || m.band === 'medium').length;
   const dueCount = scored.filter(needsSummary).length;
@@ -150,6 +163,7 @@ export async function runRetentionScoring(opts?: {
     summariesCleared: cleared.summariesCleared,
     ghostScoresCleared: cleared.ghostScoresCleared,
     snapshotsWritten: snapshots.written,
+    resultsWritten,
     errors,
     durationMs: Date.now() - started,
   };

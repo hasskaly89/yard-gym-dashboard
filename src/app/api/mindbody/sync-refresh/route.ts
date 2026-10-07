@@ -13,6 +13,7 @@ import {
 import { resetMBCallCount, getMBCallCount } from '@/lib/mindbody/api';
 import { markRun } from '@/lib/mindbody/sync-state';
 import { backfillSnapshots } from '@/lib/retention/snapshots';
+import { backfillContactResults } from '@/lib/retention/results';
 import { computeScoresForPaidMembers } from '@/lib/retention/health';
 import { generateRetentionSummary } from '@/lib/ai/retention-summary';
 import { runRetentionScoring } from '@/lib/retention/run-scoring';
@@ -131,6 +132,11 @@ export async function POST(req: NextRequest) {
       result.snapshotBackfill = await backfillSnapshots(
         Math.min(Math.max(Number(body.days) || 90, 1), 180),
       );
+    }
+
+    // Measure every past contact and cron message once. Needs migration 024.
+    if (steps.includes('results-backfill')) {
+      result.resultsBackfill = await backfillContactResults();
     }
 
     if (steps.includes('score')) {

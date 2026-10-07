@@ -128,6 +128,7 @@ export async function GET(req: NextRequest) {
       summariesCleared: 0,
       ghostScoresCleared: 0,
       snapshotsWritten: 0,
+      resultsWritten: 0,
       errors: [] as string[],
       durationMs: 0,
     },

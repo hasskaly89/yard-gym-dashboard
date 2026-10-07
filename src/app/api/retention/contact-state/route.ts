@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { displayNameForEmail } from '@/lib/retention/users';
 
 export type ContactInfo = {
   contactedAt: string;
@@ -11,12 +13,27 @@ export type SnoozeInfo = {
   snoozedByName: string;
 };
 
+export type AssignmentInfo = {
+  assignedTo: string;
+  assignedToName: string;
+  assignedByName: string;
+  assignedAt: string;
+};
+
+export type Assignee = { id: string; name: string };
+
 export type ContactStateResponse = {
   // Most recent contact per member (only members contacted in last 30 days
   // — older history is in the DB but irrelevant for badges and prioritisation).
   contacts: Record<string, ContactInfo>;
   // Active snoozes only (snoozed_until > now).
   snoozes: Record<string, SnoozeInfo>;
+  // Who owns which member — the Assigned queue.
+  assignments: Record<string, AssignmentInfo>;
+  // Staff who can be assigned to. profiles is own-row-only under RLS, so this
+  // is read with the admin client after the session check above.
+  assignees: Assignee[];
+  currentUserId: string | null;
 };
 
 export async function GET() {
@@ -32,8 +49,13 @@ export async function GET() {
   // Pull last 30d of contacts and reduce to most-recent-per-member client-side.
   // Querying ~hundreds of rows is fine; a DISTINCT ON would be cleaner but
   // requires raw SQL through Supabase RPC. Not worth the indirection for v1.
-  const [{ data: contactRows, error: cErr }, { data: snoozeRows, error: sErr }] =
-    await Promise.all([
+  const admin = createAdminClient();
+  const [
+    { data: contactRows, error: cErr },
+    { data: snoozeRows, error: sErr },
+    { data: assignRows },
+    { data: profileRows },
+  ] = await Promise.all([
       supabase
         .from('member_contacts')
         .select('member_id, contacted_at, contacted_by_name')
@@ -43,6 +65,10 @@ export async function GET() {
         .from('member_snoozes')
         .select('member_id, snoozed_until, snoozed_by_name')
         .gt('snoozed_until', new Date().toISOString()),
+      supabase
+        .from('member_assignments')
+        .select('member_id, assigned_to, assigned_to_name, assigned_by_name, updated_at'),
+      admin.from('profiles').select('id, email, full_name').order('full_name'),
     ]);
 
   if (cErr || sErr) {
@@ -70,6 +96,27 @@ export async function GET() {
     };
   }
 
-  const body: ContactStateResponse = { contacts, snoozes };
+  const assignments: Record<string, AssignmentInfo> = {};
+  for (const row of assignRows ?? []) {
+    assignments[row.member_id] = {
+      assignedTo: row.assigned_to,
+      assignedToName: row.assigned_to_name,
+      assignedByName: row.assigned_by_name,
+      assignedAt: row.updated_at,
+    };
+  }
+
+  const assignees: Assignee[] = (profileRows ?? []).map((p) => ({
+    id: p.id,
+    name: p.full_name?.trim() || displayNameForEmail(p.email),
+  }));
+
+  const body: ContactStateResponse = {
+    contacts,
+    snoozes,
+    assignments,
+    assignees,
+    currentUserId: userData.user.id,
+  };
   return NextResponse.json(body);
 }

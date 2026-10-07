@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { TodayCallsMember } from './TodayCalls';
+import type { QueueMember } from '@/lib/retention/queues';
 
 export type LogOptions = { channel?: Channel; outcome?: string };
 export type Channel = 'call' | 'sms' | 'in_person' | 'ghl' | 'other';
@@ -22,9 +22,9 @@ export default function LogButton({
   pending,
   onLog,
 }: {
-  member: TodayCallsMember;
+  member: QueueMember;
   pending: boolean;
-  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
+  onLog: (m: QueueMember, opts?: LogOptions) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [outcome, setOutcome] = useState('');

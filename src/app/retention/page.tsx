@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import TodayCalls, { type TodayCallsMember } from '@/components/retention/TodayCalls';
+import TaskQueue from '@/components/retention/TaskQueue';
+import type { QueueMember, QueueMembership } from '@/lib/retention/queues';
+import type { ScoreDelta } from '@/lib/retention/scoreDelta';
+import { HEALTH_STYLE } from '@/components/retention/bands';
 import LogButton, { type LogOptions } from '@/components/retention/LogButton';
-import { logContact, snoozeMember } from './actions';
+import { logContact, snoozeMember, assignMember, unassignMember } from './actions';
 import { daysSinceSydney, sydneyYmd } from '@/lib/retention/dates';
 import type {
+  Assignee,
   ContactInfo,
   ContactStateResponse,
   SnoozeInfo,
@@ -39,15 +43,11 @@ interface RetentionMember {
   nextBookingAt: string | null;
   noShows30: number;
   lateCancels30: number;
+  hasPaidMembership: boolean;
+  membership: QueueMembership | null;
+  scoreDelta: ScoreDelta | null;
+  reason: string;
 }
-
-// Health-score chip styling by band. Low score = high risk (Recovr-style).
-const HEALTH_STYLE: Record<RiskBand, string> = {
-  healthy: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  medium: 'bg-amber-50 text-amber-700 border-amber-200',
-  high: 'bg-rose-50 text-rose-700 border-rose-200',
-  lost: 'bg-gray-100 text-gray-600 border-gray-200',
-};
 
 function daysSinceIso(iso: string): number {
   return daysSinceSydney(iso) ?? 0;
@@ -209,8 +209,8 @@ function MemberCard({
   snooze: SnoozeInfo | undefined;
   pending: boolean;
   onCopy: (m: RetentionMember) => void;
-  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
-  onSnooze: (m: TodayCallsMember) => void;
+  onLog: (m: QueueMember, opts?: LogOptions) => void;
+  onSnooze: (m: QueueMember) => void;
   onSelect: (id: string) => void;
 }) {
   // Bar fill: 100% = held pace, less than 100% = decline, more = growth.
@@ -359,8 +359,8 @@ function MemberDrawer({
   copied: boolean;
   pending: boolean;
   onCopy: (m: RetentionMember) => void;
-  onLog: (m: TodayCallsMember, opts?: LogOptions) => void;
-  onSnooze: (m: TodayCallsMember) => void;
+  onLog: (m: QueueMember, opts?: LogOptions) => void;
+  onSnooze: (m: QueueMember) => void;
   onClose: () => void;
 }) {
   const showGhl = Boolean(ghlLocationId && ghlPortalUrl && member.ghlContactId);
@@ -513,6 +513,9 @@ export default function RetentionPage() {
   const [contactState, setContactState] = useState<ContactStateResponse>({
     contacts: {},
     snoozes: {},
+    assignments: {},
+    assignees: [],
+    currentUserId: null,
   });
   const [actionPending, setActionPending] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -562,7 +565,7 @@ export default function RetentionPage() {
   }, []);
 
   const handleLog = useCallback(
-    async (m: TodayCallsMember, opts?: LogOptions) => {
+    async (m: QueueMember, opts?: LogOptions) => {
       markPending(m.id, true);
       try {
         const result = await logContact({
@@ -585,7 +588,7 @@ export default function RetentionPage() {
   );
 
   const handleSnooze = useCallback(
-    async (m: TodayCallsMember) => {
+    async (m: QueueMember) => {
       markPending(m.id, true);
       try {
         const result = await snoozeMember({ memberId: m.id, days: 7 });
@@ -602,6 +605,27 @@ export default function RetentionPage() {
   );
 
   const members = data?.members ?? [];
+  const handleAssign = useCallback(
+    async (m: QueueMember, who: Assignee | null) => {
+      markPending(m.id, true);
+      try {
+        const res = who
+          ? await assignMember({
+              memberId: m.id,
+              memberName: `${m.firstName} ${m.lastName}`.trim(),
+              assigneeId: who.id,
+              assigneeName: who.name,
+            })
+          : await unassignMember({ memberId: m.id });
+        if (!res.ok) setError(res.error);
+        await loadContactState();
+      } finally {
+        markPending(m.id, false);
+      }
+    },
+    [markPending, loadContactState],
+  );
+
   const selectedMember = members.find((m) => m.id === selectedId) ?? null;
 
   const filtered = useMemo(() => {
@@ -620,7 +644,7 @@ export default function RetentionPage() {
       SLIDING: [],
       STOPPED: [],
     };
-    for (const m of filtered) groups[m.trendCategory].push(m);
+    for (const m of filtered) if (m.hasPaidMembership) groups[m.trendCategory].push(m);
     // Worst trend first within each column — the steepest decline at the top.
     for (const cat of Object.keys(groups) as TrendCategory[]) {
       groups[cat].sort((a, b) => a.trend - b.trend);
@@ -628,7 +652,7 @@ export default function RetentionPage() {
     return groups;
   }, [filtered]);
 
-  async function copyPhone(m: TodayCallsMember) {
+  async function copyPhone(m: QueueMember) {
     if (!m.mobilePhone) return;
     try {
       await navigator.clipboard.writeText(m.mobilePhone);
@@ -739,21 +763,22 @@ export default function RetentionPage() {
       </div>
 
       {!loading && members.length > 0 && (
-        <TodayCalls
+        <TaskQueue
           members={filtered}
           contacts={contactState.contacts}
           snoozes={contactState.snoozes}
+          assignments={contactState.assignments}
+          assignees={contactState.assignees}
+          currentUserId={contactState.currentUserId}
           ghlLocationId={data?.ghlLocationId ?? ''}
           ghlPortalUrl={data?.ghlPortalUrl ?? ''}
           copiedId={copiedId}
           actionPending={actionPending}
           refreshedAt={data?.updatedAt}
-          totalAtRisk={
-            filtered.filter((m) => m.trendCategory !== 'STABLE').length
-          }
           onCopy={copyPhone}
           onLog={handleLog}
           onSnooze={handleSnooze}
+          onAssign={handleAssign}
           onSelect={setSelectedId}
         />
       )}

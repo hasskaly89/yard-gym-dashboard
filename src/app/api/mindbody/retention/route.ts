@@ -4,6 +4,10 @@ import { tallyVisitWindows } from '@/lib/retention/windows';
 import { computeHealthScore, type RiskBand } from '@/lib/retention/healthScore';
 import { daysSinceSydney } from '@/lib/retention/dates';
 import { classify, type TrendCategory } from '@/lib/retention/classify';
+import { reasonFor } from '@/lib/retention/reasons';
+import { scoreDeltaSince, type ScoreDelta, type Snapshot } from '@/lib/retention/scoreDelta';
+import { sydneyYmd } from '@/lib/retention/dates';
+import type { QueueMembership } from '@/lib/retention/queues';
 
 // IMPORTANT — cost note (see memory: project_mindbody_api_billing):
 // MindBody bills $0.002 PER API CALL. This endpoint used to recompute the
@@ -48,7 +52,95 @@ type RetentionMember = {
   lateCancels30: number;
   totalVisitCount: number;
   membershipStartDate: string | null;
+  // Queue layer (Recovr's My Tasks)
+  hasPaidMembership: boolean;
+  membership: QueueMembership | null;
+  scoreDelta: ScoreDelta | null;
+  reason: string;
 };
+
+// MindBody calls all three of these "TYG Membership" (MembershipId 12); the
+// ProductId is what tells a commitment from ongoing weekly. Mapping confirmed
+// by Hassan from the typical active→expiry span of each (30 Sep).
+const TYG_MEMBERSHIP_VARIANT: Record<number, string> = {
+  100017: '8-Week Commitment',
+  100086: '6-Month Commitment',
+  100339: 'Weekly',
+};
+
+type MembershipRow = {
+  mindbody_client_id: string;
+  kind: 'paid' | 'intro' | 'class_pack' | 'other';
+  name: string | null;
+  active_date: string | null;
+  expiration_date: string | null;
+  remaining_sessions: number | null;
+  total_sessions: number | null;
+  still_returned: boolean;
+  last_seen_at: string;
+  raw: { ProductId?: number } | null;
+};
+
+const UNLIMITED = 9999;
+
+// One membership per member for the card: the current paid one with the
+// latest expiry; otherwise a current intro/pack; otherwise a paid one that
+// ended in the last fortnight ("expired package").
+function summariseMembership(rows: MembershipRow[], today: string, nowMs: number): QueueMembership | null {
+  const daysTo = (d: string | null) => (d ? Math.round((Date.parse(d) - Date.parse(today)) / 86400000) : null);
+  const label = (r: MembershipRow) => {
+    const variant = r.raw?.ProductId ? TYG_MEMBERSHIP_VARIANT[r.raw.ProductId] : undefined;
+    return variant && r.name === 'TYG Membership' ? `${r.name} · ${variant}` : (r.name ?? 'Membership');
+  };
+  const shape = (r: MembershipRow, justExpired: boolean): QueueMembership => ({
+    name: label(r),
+    kind: r.kind,
+    activeDate: r.active_date,
+    expirationDate: r.expiration_date,
+    daysToExpiry: daysTo(r.expiration_date),
+    remainingSessions: r.total_sessions !== null && r.total_sessions >= UNLIMITED ? null : r.remaining_sessions,
+    totalSessions: r.total_sessions !== null && r.total_sessions >= UNLIMITED ? null : r.total_sessions,
+    justExpired,
+  });
+  const latest = (rs: MembershipRow[]) =>
+    rs.sort((a, b) => (b.expiration_date ?? '').localeCompare(a.expiration_date ?? ''))[0];
+
+  const current = rows.filter((r) => r.still_returned);
+  const paid = current.filter((r) => r.kind === 'paid');
+  if (paid.length) return shape(latest(paid), false);
+  const intro = current.filter((r) => r.kind === 'intro' || r.kind === 'class_pack');
+  if (intro.length) return shape(latest(intro), false);
+  const fortnight = nowMs - 14 * 86400000;
+  const ended = rows.filter((r) => !r.still_returned && r.kind === 'paid' && Date.parse(r.last_seen_at) >= fortnight);
+  if (ended.length) return shape(latest(ended), true);
+  return null;
+}
+
+// Members who are not paid but hold a current intro offer or class pack — the
+// Conversions queue. They are not in the nightly visit sync (paid only), so
+// their windows are whatever history exists.
+async function fetchConversionCandidates(
+  supabase: ReturnType<typeof createAdminClient>,
+): Promise<PaidMemberRow[]> {
+  const { data: rows } = await supabase
+    .from('member_memberships')
+    .select('mindbody_client_id')
+    .in('kind', ['intro', 'class_pack'])
+    .eq('still_returned', true)
+    .returns<{ mindbody_client_id: string }[]>();
+  const ids = [...new Set((rows ?? []).map((r) => r.mindbody_client_id))];
+  if (ids.length === 0) return [];
+  const { data } = await supabase
+    .from('members')
+    .select(
+      'mindbody_client_id, first_name, last_name, email, phone, ghl_contact_id, last_visit_date, total_visit_count, membership_start_date, next_booking_at',
+    )
+    .in('mindbody_client_id', ids)
+    .eq('status', 'active')
+    .eq('has_paid_membership', false)
+    .returns<PaidMemberRow[]>();
+  return data ?? [];
+}
 
 type PaidMemberRow = {
   mindbody_client_id: string;
@@ -117,11 +209,56 @@ export async function GET() {
     });
   }
 
-  const paidIds = paid.map((m) => m.mindbody_client_id);
-  const windows = await tallyVisitWindows(supabase, paidIds);
-  const summaries = await fetchSummaries(supabase);
+  const conversionRows = await fetchConversionCandidates(supabase);
+  const allRows = [...paid, ...conversionRows];
+  const allIds = allRows.map((m) => m.mindbody_client_id);
+  const paidSet = new Set(paid.map((m) => m.mindbody_client_id));
+  const nowMs = Date.now();
+  const today = sydneyYmd(new Date(nowMs));
 
-  const members: RetentionMember[] = paid.map((m) => {
+  const [windows, summaries, membershipRows, snapshotRows] = await Promise.all([
+    tallyVisitWindows(supabase, allIds),
+    fetchSummaries(supabase),
+    supabase
+      .from('member_memberships')
+      .select('mindbody_client_id, kind, name, active_date, expiration_date, remaining_sessions, total_sessions, still_returned, last_seen_at, raw')
+      .in('mindbody_client_id', allIds)
+      .returns<MembershipRow[]>()
+      .then((r) => r.data ?? []),
+    // Last 35 days of history, for "dropped N points since <date>".
+    (async () => {
+      const since = sydneyYmd(new Date(nowMs - 35 * 86400000));
+      const out: (Snapshot & { mindbody_client_id: string })[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data } = await supabase
+          .from('member_score_snapshots')
+          .select('mindbody_client_id, snapshot_date, score, band')
+          .in('mindbody_client_id', allIds)
+          .gte('snapshot_date', since)
+          .lt('snapshot_date', today)
+          .order('snapshot_date', { ascending: true })
+          .range(from, from + 999)
+          .returns<(Snapshot & { mindbody_client_id: string })[]>();
+        if (!data?.length) break;
+        out.push(...data);
+        if (data.length < 1000) break;
+      }
+      return out;
+    })(),
+  ]);
+
+  const membershipsById = new Map<string, MembershipRow[]>();
+  for (const r of membershipRows) {
+    if (!membershipsById.has(r.mindbody_client_id)) membershipsById.set(r.mindbody_client_id, []);
+    membershipsById.get(r.mindbody_client_id)!.push(r);
+  }
+  const historyById = new Map<string, Snapshot[]>();
+  for (const r of snapshotRows) {
+    if (!historyById.has(r.mindbody_client_id)) historyById.set(r.mindbody_client_id, []);
+    historyById.get(r.mindbody_client_id)!.push(r);
+  }
+
+  const members: RetentionMember[] = allRows.map((m) => {
     const c = windows.get(m.mindbody_client_id) ?? {
       last7: 0,
       prior7: 0,
@@ -149,6 +286,25 @@ export async function GET() {
     });
     const atRisk = health.band === 'high' || health.band === 'medium';
     const stored = summaries.get(m.mindbody_client_id);
+    const hasPaidMembership = paidSet.has(m.mindbody_client_id);
+    const membership = summariseMembership(membershipsById.get(m.mindbody_client_id) ?? [], today, nowMs);
+    const scoreDelta = scoreDeltaSince(historyById.get(m.mindbody_client_id) ?? [], health.score, health.band);
+    const perWeekNow = Math.round((c.last56 / 8) * 10) / 10;
+    const perWeekPrior = Math.round((c.prior56 / 8) * 10) / 10;
+    const reason = reasonFor({
+      score: health.score,
+      band: health.band,
+      scoreDelta,
+      perWeekNow,
+      perWeekPrior,
+      declinePct: c.prior56 >= 4 ? Math.round(((c.prior56 - c.last56) / c.prior56) * 100) : null,
+      daysSinceLastVisit: dslv,
+      nextBookingAt: m.next_booking_at ?? null,
+      noShows30: c.noShows30,
+      membership,
+      nowMs,
+      fallback: health.reasons[0] ?? '',
+    });
     return {
       id: m.mindbody_client_id,
       firstName: m.first_name ?? '',
@@ -180,6 +336,10 @@ export async function GET() {
       lateCancels30: c.lateCancels30,
       totalVisitCount: m.total_visit_count ?? 0,
       membershipStartDate: m.membership_start_date,
+      hasPaidMembership,
+      membership,
+      scoreDelta,
+      reason,
     };
   });
 

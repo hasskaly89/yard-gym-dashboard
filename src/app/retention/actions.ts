@@ -179,3 +179,45 @@ export async function undoLastContact(input: {
   revalidatePath('/retention');
   return { ok: true, data: undefined };
 }
+
+// One owner per member; assigning again replaces the previous owner.
+export async function assignMember(input: {
+  memberId: string;
+  memberName: string;
+  assigneeId: string;
+  assigneeName: string;
+}): Promise<ActionResult> {
+  const { supabase, user, error } = await requireUser();
+  if (!supabase || !user) return { ok: false, error: error ?? 'No user' };
+
+  const { error: upErr } = await supabase.from('member_assignments').upsert(
+    {
+      member_id: input.memberId,
+      member_name: input.memberName,
+      assigned_to: input.assigneeId,
+      assigned_to_name: input.assigneeName,
+      assigned_by: user.id,
+      assigned_by_name: displayNameForEmail(user.email),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'member_id' },
+  );
+  if (upErr) return { ok: false, error: upErr.message };
+
+  revalidatePath('/retention');
+  return { ok: true, data: undefined };
+}
+
+export async function unassignMember(input: { memberId: string }): Promise<ActionResult> {
+  const { supabase, user, error } = await requireUser();
+  if (!supabase || !user) return { ok: false, error: error ?? 'No user' };
+
+  const { error: delErr } = await supabase
+    .from('member_assignments')
+    .delete()
+    .eq('member_id', input.memberId);
+  if (delErr) return { ok: false, error: delErr.message };
+
+  revalidatePath('/retention');
+  return { ok: true, data: undefined };
+}

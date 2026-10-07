@@ -265,6 +265,12 @@ export async function GET(req: NextRequest) {
   // Fetch all active members. PostgREST caps select() at 1000 rows by default,
   // so we paginate — without this ~500 members were missing from the legacy
   // birthday/anniversary/inactivity scans.
+  // Paid members only. `status = 'active'` is MindBody's "record never
+  // deactivated" flag — 1,635 people including expired members, old trials
+  // and class-pack buyers. The inactivity loop was texting all of them: the
+  // Results engine found 448 of 470 unmeasurable inactivity sends went to
+  // non-members, and 8 of the last fortnight's 33. Birthdays and
+  // anniversaries are a current member's milestones too.
   const PAGE = 1000
   const members: any[] = []
   for (let from = 0; ; from += PAGE) {
@@ -272,6 +278,7 @@ export async function GET(req: NextRequest) {
       .from('members')
       .select('*')
       .eq('status', 'active')
+      .eq('has_paid_membership', true)
       .order('mindbody_client_id')
       .range(from, from + PAGE - 1)
     if (error) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dispatch } from "@/lib/outbound/dispatch";
 import nodemailer from "nodemailer";
 import { createClient } from "@/lib/supabase/server";
 
@@ -93,17 +94,25 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  try {
-    await transporter.sendMail({
-      from: `"The Yard Gym Dashboard" <${process.env.SMTP_USER}>`,
-      to: process.env.NOTIFY_EMAIL || process.env.SMTP_USER,
-      subject: `Timesheet: ${staffName} — Week ending ${weekEnding}`,
-      html: htmlBody,
-    });
-  } catch (emailErr) {
-    console.error("Email send failed:", emailErr);
+  const to = process.env.NOTIFY_EMAIL || process.env.SMTP_USER || "";
+  const r = await dispatch({
+    channel: "email",
+    recipient: to,
+    purpose: "timesheet",
+    payload: { staffName, weekEnding },
+    send: (target) =>
+      transporter
+        .sendMail({
+          from: `"The Yard Gym Dashboard" <${process.env.SMTP_USER}>`,
+          to: target,
+          subject: `Timesheet: ${staffName} — Week ending ${weekEnding}`,
+          html: htmlBody,
+        })
+        .then(() => undefined),
+  });
+  if (r.status === "failed") {
+    console.error("Email send failed:", r.reason);
     // Don't fail the whole request just because email failed
-    // In production you'd want to handle this better
   }
 
   return NextResponse.json({ success: true });

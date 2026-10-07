@@ -1,3 +1,4 @@
+import { dispatch } from '@/lib/outbound/dispatch';
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
 import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
@@ -159,16 +160,23 @@ export async function GET(req: NextRequest) {
     auth: { user: smtpUser, pass: smtpPass },
   });
 
+  // Staff mail, but through the same door as member messages: a local run
+  // writes a suppressed outbound_log row instead of emailing anyone.
   const sendResults = await Promise.allSettled(
-    RECIPIENTS.map((to) =>
-      transporter.sendMail({
-        from: `"Yard Dashboard" <${smtpUser}>`,
-        to,
-        replyTo: REPLY_TO,
-        subject,
-        text,
-      }),
-    ),
+    RECIPIENTS.map(async (to) => {
+      const r = await dispatch({
+        channel: 'email',
+        recipient: to,
+        purpose: 'eod-summary',
+        payload: { subject },
+        send: (target) =>
+          transporter
+            .sendMail({ from: `"Yard Dashboard" <${smtpUser}>`, to: target, replyTo: REPLY_TO, subject, text })
+            .then(() => undefined),
+      });
+      if (r.status === 'failed') throw new Error(r.reason);
+      return r;
+    }),
   );
 
   const failed = sendResults.filter((r) => r.status === 'rejected');

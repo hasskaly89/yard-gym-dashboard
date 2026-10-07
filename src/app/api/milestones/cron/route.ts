@@ -296,6 +296,7 @@ export async function GET(req: NextRequest) {
         const { data: existing } = await supabase
           .from('milestone_log')
           .select('id')
+          .eq('runtime_env', 'production')
           .eq('mindbody_client_id', member.mindbody_client_id)
           .eq('milestone_type', 'birthday')
           .gte('triggered_at', today + 'T00:00:00')

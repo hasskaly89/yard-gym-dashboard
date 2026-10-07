@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { addGHLTag, triggerGHLWebhook, createOrSyncGHLContact } from '@/lib/ghl/api'
+import { dispatch, isProductionRuntime } from '@/lib/outbound/dispatch'
 
 export type MilestoneType = 'birthday' | 'session' | 'anniversary' | 'inactivity'
 
@@ -38,10 +39,13 @@ export async function triggerMilestone(
   let ghlNotified = false
 
   // 1. Log milestone
+  // runtime_env scopes the dedupe: a suppressed local run must not make the
+  // real production run skip this member tonight.
   const { error: logError } = await supabase.from('milestone_log').insert({
     mindbody_client_id: member.mindbody_client_id,
     milestone_type: type,
     milestone_value: value,
+    runtime_env: isProductionRuntime() ? 'production' : (process.env.VERCEL_ENV ?? 'local'),
   })
 
   if (logError) {
@@ -61,35 +65,50 @@ export async function triggerMilestone(
     }
   }
 
-  // 3. Tag the GHL contact
+  // 3. Tag the GHL contact — through the one outbound door.
   if (contactId) {
-    try {
-      const tag = buildTag(type, value)
-      await addGHLTag(contactId, tag)
-      ghlNotified = true
-    } catch (err) {
-      console.error('[Milestone] GHL tag failed:', err)
-    }
+    const tag = buildTag(type, value)
+    const r = await dispatch({
+      channel: 'ghl_tag',
+      memberId: member.mindbody_client_id,
+      recipient: contactId,
+      purpose: `milestone:${type}:${value}:tag`,
+      payload: { tag },
+      send: (target) => addGHLTag(target, tag),
+    })
+    if (r.status === 'sent') ghlNotified = true
+    else if (r.status === 'failed') console.error('[Milestone] GHL tag failed:', r.reason)
   }
 
-  // 4. Fire GHL webhook if configured
+  // 4. Fire GHL webhook if configured — the SMS goes out from GHL's side.
   const webhookUrl = WEBHOOK_URLS[type]
   if (webhookUrl) {
-    try {
-      await triggerGHLWebhook(webhookUrl, {
-        name: `${member.first_name} ${member.last_name}`,
-        firstName: member.first_name,
-        lastName: member.last_name,
-        email: member.email ?? '',
-        phone: member.phone ?? '',
-        milestone: type,
-        value,
-        mindbodyClientId: member.mindbody_client_id,
-      })
-      ghlNotified = true
-    } catch (err) {
-      console.error('[Milestone] Webhook failed:', err)
+    const payload = {
+      name: `${member.first_name} ${member.last_name}`,
+      firstName: member.first_name,
+      lastName: member.last_name,
+      email: member.email ?? '',
+      phone: member.phone ?? '',
+      milestone: type,
+      value,
+      mindbodyClientId: member.mindbody_client_id,
     }
+    const r = await dispatch({
+      channel: 'ghl_webhook',
+      memberId: member.mindbody_client_id,
+      recipient: member.phone || member.email || contactId || 'unknown',
+      purpose: `milestone:${type}:${value}`,
+      payload,
+      // A redirect cannot change who GHL's workflow texts — the number is in
+      // the payload — so on redirect the webhook is NOT fired; the log row
+      // records what would have gone.
+      send: async () => {
+        if (process.env.OUTBOUND_REDIRECT_TO) throw new Error('redirect not supported for webhooks; logged only')
+        await triggerGHLWebhook(webhookUrl, payload)
+      },
+    })
+    if (r.status === 'sent') ghlNotified = true
+    else if (r.status === 'failed') console.error('[Milestone] Webhook failed:', r.reason)
   }
 
   // 5. Update milestone_log with notification status
@@ -99,6 +118,7 @@ export async function triggerMilestone(
     .eq('mindbody_client_id', member.mindbody_client_id)
     .eq('milestone_type', type)
     .eq('milestone_value', value)
+    .eq('runtime_env', isProductionRuntime() ? 'production' : (process.env.VERCEL_ENV ?? 'local'))
     .order('triggered_at', { ascending: false })
     .limit(1)
 

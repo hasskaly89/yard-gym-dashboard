@@ -236,7 +236,7 @@ export async function syncMemberVisitCounts(opts?: {
         visitsSeen += visits.length;
         const { clean, lastVisit } = normaliseVisits(visits, started);
 
-        // Upsert per-visit history on (mindbody_client_id, visit_at). This is
+        // Upsert per-visit history on (member, visit_at, class_name). This is
         // a real update, not DO NOTHING: a row stored as 'booked' last night
         // must become 'attended' or 'no_show' once the class has happened.
         // Inserted rows are the ones whose created_at is this run's.
@@ -244,7 +244,7 @@ export async function syncMemberVisitCounts(opts?: {
           const rows = clean.map((v) => ({
             mindbody_client_id: m.mindbody_client_id,
             visit_at: v.visitAt,
-            class_name: v.className,
+            class_name: v.className ?? '',
             status: v.status,
             mindbody_visit_id: v.mbVisitId,
             last_seen_at: startedAt,
@@ -253,7 +253,10 @@ export async function syncMemberVisitCounts(opts?: {
             const chunk = rows.slice(j, j + 500);
             const { data: written, error: vErr } = await supabase
               .from('member_visits')
-              .upsert(chunk, { onConflict: 'mindbody_client_id,visit_at' })
+              // Two classes at one start time are two rows (migration 021);
+              // on the old (member, time) key a double-booked member made the
+              // whole chunk fail with "cannot affect row a second time".
+              .upsert(chunk, { onConflict: 'mindbody_client_id,visit_at,class_name' })
               .select('created_at');
             if (vErr) {
               throw new Error(`${m.mindbody_client_id} visits: ${vErr.message}`);

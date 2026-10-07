@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { PERIODS, type PeriodKey } from '@/lib/periods';
 import {
@@ -182,6 +182,7 @@ export default function DashboardPage() {
             </div>
             {data?.insights && <MindBodyRetentionSidebar insights={data.insights} ghl={ghl} />}
           </div>
+          <EmailsCard data={data} />
         </div>
       )}
     </div>
@@ -503,14 +504,12 @@ function InboxCard({ data }: { data: DashboardData | null }) {
     ? ['business', 'personal']
     : ['business'];
   const [tab, setTab] = useState<'business' | 'personal'>('business');
-  const [view, setView] = useState<'tasks' | 'completed' | 'emails'>('tasks');
+  const [view, setView] = useState<'tasks' | 'completed'>('tasks');
   const [overrides, setOverrides] = useState<Record<string, TaskOverride>>({});
 
   const brief = tab === 'business' ? data?.briefs.business : data?.briefs.personal;
   const connected =
     tab === 'business' ? data?.config.businessConnected : data?.config.personalConnected;
-  const emails: EmailItem[] = Array.isArray(brief?.emails) ? (brief!.emails as EmailItem[]) : [];
-
   const rawTasks: Task[] = Array.isArray(brief?.tasks) ? (brief!.tasks as Task[]) : [];
   const allTasks = rawTasks.map((t) => {
     const key = t.id ?? t.title;
@@ -544,7 +543,11 @@ function InboxCard({ data }: { data: DashboardData | null }) {
             </button>
           ))}
         </div>
-        {brief && <span className="text-[11px] text-gym-muted">{brief.emails_scanned} emails scanned</span>}
+        {brief && (
+          <span className="text-[11px] text-gym-muted">
+            From {brief.emails_scanned} emails scanned
+          </span>
+        )}
       </div>
 
       <div className="p-5">
@@ -593,15 +596,6 @@ function InboxCard({ data }: { data: DashboardData | null }) {
                 }`}
               >
                 Completed {completedTasks.length > 0 && `(${completedTasks.length})`}
-              </button>
-              <button
-                type="button"
-                onClick={() => setView('emails')}
-                className={`px-4 py-1.5 text-sm font-medium rounded-md transition ${
-                  view === 'emails' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                Recent emails {emails.length > 0 && `(${emails.length})`}
               </button>
             </div>
 
@@ -663,31 +657,7 @@ function InboxCard({ data }: { data: DashboardData | null }) {
                   ))}
                 </ul>
               )
-            ) : emails.length === 0 ? (
-              <div className="border border-gym-border rounded-xl p-5 text-center text-sm text-gray-500">
-                No recent emails.
-              </div>
-            ) : (
-              <ul className="divide-y divide-gym-border border border-gym-border rounded-xl overflow-hidden">
-                {emails.map((e, i) => (
-                  <li key={i} className="p-3 hover:bg-gray-50 transition">
-                    <a
-                      href={e.url ?? undefined}
-                      target={e.url ? '_blank' : undefined}
-                      rel={e.url ? 'noopener noreferrer' : undefined}
-                      className={e.url ? 'block cursor-pointer' : 'block cursor-default'}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-gray-900 truncate">{e.subject}</span>
-                        <span className="text-[11px] text-gym-muted flex-none">{relativeDate(e.date)}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 truncate mt-0.5">{e.from}</p>
-                      {e.snippet && <p className="text-xs text-gray-400 truncate mt-0.5">{e.snippet}</p>}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
+            ) : null}
           </div>
         )}
       </div>
@@ -824,32 +794,174 @@ function TaskCard({
   );
 }
 
-function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
-  if (scope === 'business') {
-    return (
-      <div className="border border-gym-border rounded-xl p-5 text-center">
-        <InboxIcon size={22} className="mx-auto mb-2 text-gym-muted" aria-hidden />
-        <p className="text-sm font-medium text-gray-800">Connect your business inbox</p>
-        <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto mb-3">
-          Once connected, your agent reads it each morning and lists what needs doing here. The
-          Yard's Workspace requires Google sign-in rather than an app password.
-        </p>
-        <a
-          href="/api/auth/gmail/connect?scope=business"
-          className="inline-block text-xs font-medium text-white bg-gym-accent hover:bg-gym-accent-hover rounded-lg px-4 py-2 transition-colors"
-        >
-          Connect with Google
-        </a>
+// ── Emails, both inboxes, one list ────────────────────────────────────────────
+//
+// Emails used to be a third tab INSIDE each inbox tab of the tasks card, so
+// seeing everything meant four clicks and there was no way to view both
+// mailboxes at once. Tasks are a to-do list; email is a stream you skim. They
+// are different jobs and now sit in different cards.
+//
+// The two inboxes are merged newest-first with a source badge on each row,
+// because what matters when skimming is "what has come in", not which account
+// it landed in — with chips to narrow when that does matter.
+type MergedEmail = EmailItem & { scope: 'personal' | 'business' };
+
+const SCOPE_BADGE: Record<'personal' | 'business', string> = {
+  personal: 'bg-violet-50 text-violet-700 border-violet-200',
+  business: 'bg-sky-50 text-sky-700 border-sky-200',
+};
+
+function EmailsCard({ data }: { data: DashboardData | null }) {
+  const [filter, setFilter] = useState<'all' | 'personal' | 'business'>('all');
+
+  const canSeePersonal = !!data?.briefs.personal || data?.access?.role === 'admin';
+
+  const merged: MergedEmail[] = useMemo(() => {
+    const out: MergedEmail[] = [];
+    for (const scope of ['business', 'personal'] as const) {
+      if (scope === 'personal' && !canSeePersonal) continue;
+      const brief = data?.briefs[scope];
+      if (!brief || !Array.isArray(brief.emails)) continue;
+      for (const e of brief.emails as EmailItem[]) out.push({ ...e, scope });
+    }
+    // Newest first across both mailboxes — the whole point of merging.
+    return out.sort((a, b) => b.date.localeCompare(a.date));
+  }, [data, canSeePersonal]);
+
+  const shown = filter === 'all' ? merged : merged.filter((e) => e.scope === filter);
+  const counts = {
+    all: merged.length,
+    business: merged.filter((e) => e.scope === 'business').length,
+    personal: merged.filter((e) => e.scope === 'personal').length,
+  };
+
+  const bothConnected = data?.config.businessConnected && data?.config.personalConnected;
+  const neitherConnected = !data?.config.businessConnected && !data?.config.personalConnected;
+
+  const chips: Array<{ key: 'all' | 'personal' | 'business'; label: string }> = [
+    { key: 'all', label: 'All' },
+    { key: 'business', label: 'Business' },
+    ...(canSeePersonal ? [{ key: 'personal' as const, label: 'Personal' }] : []),
+  ];
+
+  return (
+    <div className="bg-white border border-gym-border rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gym-border flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Recent emails</h2>
+          <p className="text-[11px] text-gym-muted mt-0.5">
+            {neitherConnected
+              ? 'No inbox connected yet'
+              : bothConnected
+                ? 'Both inboxes, newest first'
+                : 'Newest first'}
+          </p>
+        </div>
+        {merged.length > 0 && (
+          <div className="inline-flex rounded-lg border border-gym-border p-0.5 bg-gray-50">
+            {chips.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => setFilter(c.key)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+                  filter === c.key
+                    ? 'bg-white shadow-sm text-gray-900'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {c.label} {counts[c.key] > 0 && `(${counts[c.key]})`}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-    );
-  }
+
+      <div className="p-5">
+        {/* Only nudge about the inbox that is actually missing — telling someone
+            to connect an inbox they already connected is how the Meta page went
+            wrong. */}
+        {canSeePersonal && !data?.config.personalConnected && data?.config.businessConnected && (
+          <div className="border border-gym-border rounded-xl p-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-xs text-gray-600">
+              Your personal inbox isn&apos;t connected — only business email is shown below.
+            </p>
+            <a
+              href="/api/auth/gmail/connect?scope=personal"
+              className="text-xs font-medium text-white bg-gym-accent hover:bg-gym-accent-hover rounded-lg px-3 py-1.5 transition-colors flex-none"
+            >
+              Connect personal
+            </a>
+          </div>
+        )}
+
+        {shown.length === 0 ? (
+          <div className="border border-gym-border rounded-xl p-5 text-center text-sm text-gray-500">
+            {neitherConnected
+              ? 'Connect an inbox above and your email will appear here after the next run.'
+              : 'No recent emails.'}
+          </div>
+        ) : (
+          <ul className="divide-y divide-gym-border border border-gym-border rounded-xl overflow-hidden">
+            {shown.map((e, i) => (
+              <li key={`${e.scope}-${i}`} className="p-3 hover:bg-gray-50 transition">
+                <a
+                  href={e.url ?? undefined}
+                  target={e.url ? '_blank' : undefined}
+                  rel={e.url ? 'noopener noreferrer' : undefined}
+                  className={e.url ? 'block cursor-pointer' : 'block cursor-default'}
+                >
+                  <div className="flex items-center gap-2">
+                    {/* Only worth showing when both are in play. */}
+                    {filter === 'all' && canSeePersonal && (
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border flex-none ${SCOPE_BADGE[e.scope]}`}
+                      >
+                        {e.scope === 'personal' ? 'Personal' : 'Business'}
+                      </span>
+                    )}
+                    <span className="text-sm font-medium text-gray-900 truncate">{e.subject}</span>
+                    <span className="text-[11px] text-gym-muted flex-none ml-auto">
+                      {relativeDate(e.date)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 truncate mt-0.5">{e.from}</p>
+                  {e.snippet && <p className="text-xs text-gray-400 truncate mt-0.5">{e.snippet}</p>}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Both inboxes connect the same way now. Personal used to say "ask your admin
+// to add the app password", which is why it stayed unconnected for over a week
+// — the app password is 19 characters including two spaces, and Vercel trims it
+// on paste to a valid-looking 16 that fails at IMAP. Signing in with Google
+// avoids the whole problem.
+function ConnectInbox({ scope }: { scope: 'business' | 'personal' }) {
+  const why =
+    scope === 'business'
+      ? "The Yard's Workspace requires Google sign-in rather than an app password."
+      : 'Sign in with the Google account for this inbox — nothing to copy or paste.';
   return (
     <div className="border border-gym-border rounded-xl p-5 text-center">
       <InboxIcon size={22} className="mx-auto mb-2 text-gym-muted" aria-hidden />
       <p className="text-sm font-medium text-gray-800">Connect your {scope} inbox</p>
-      <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
-        Once connected, your agent reads it each morning and lists what needs doing here. Ask your
-        admin to add the {scope} email’s app password.
+      <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto mb-3">
+        Once connected, your agent reads it each morning and lists what needs doing here. {why}
+      </p>
+      <a
+        href={`/api/auth/gmail/connect?scope=${scope}`}
+        className="inline-block text-xs font-medium text-white bg-gym-accent hover:bg-gym-accent-hover rounded-lg px-4 py-2 transition-colors"
+      >
+        Connect with Google
+      </a>
+      <p className="text-[11px] text-gray-400 mt-2">
+        Read-only access. The agent never sends from your inbox.
       </p>
     </div>
   );

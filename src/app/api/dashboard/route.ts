@@ -111,7 +111,10 @@ export async function GET() {
       business: briefs.business,
     },
     config: {
-      personalConnected: !!emailAccountFor('personal'),
+      // Either transport counts as connected. Checked IMAP-only before, so a
+      // personal inbox connected over Google still showed "connect your inbox".
+      personalConnected:
+        (await isOAuthConnected('personal')) || !!emailAccountFor('personal'),
       businessConnected: await isOAuthConnected('business'),
     },
     updatedAt: new Date().toISOString(),

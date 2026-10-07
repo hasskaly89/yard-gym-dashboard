@@ -53,7 +53,63 @@ export async function runRetentionScoring(opts?: {
   let summariesWritten = 0;
   if (opts?.withSummaries !== false) {
     try {
-      const summaries = await generateSummariesForAtRisk(scored);
+      // Context for the members whose summary is due tonight — the notes
+      // thread, the last contact, the current package. The notesById option
+      // existed since August and was never passed; member_notes had 0 rows,
+      // and now that the drawer can write them they must reach the model.
+      const due = scored.filter(needsSummary).map((m) => m.id);
+      const [notesRes, contactsRes, memRes] = due.length
+        ? await Promise.all([
+            supabase
+              .from('member_notes')
+              .select('member_id, note, created_at')
+              .in('member_id', due)
+              .gte('created_at', new Date(Date.now() - 90 * 86400000).toISOString())
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('member_contacts')
+              .select('member_id, contacted_at, channel, outcome')
+              .in('member_id', due)
+              .gte('contacted_at', new Date(Date.now() - 60 * 86400000).toISOString())
+              .order('contacted_at', { ascending: false }),
+            supabase
+              .from('member_memberships')
+              .select('mindbody_client_id, name, kind, expiration_date, still_returned, last_seen_at')
+              .in('mindbody_client_id', due)
+              .eq('kind', 'paid'),
+          ])
+        : [{ data: [] }, { data: [] }, { data: [] }];
+
+      const notesById = new Map<string, string[]>();
+      for (const n of notesRes.data ?? []) {
+        const list = notesById.get(n.member_id) ?? [];
+        if (list.length < 3) list.push(n.note);
+        notesById.set(n.member_id, list);
+      }
+      const contactsById = new Map<string, { daysAgo: number; channel: string | null; outcome: string | null }>();
+      for (const c of contactsRes.data ?? []) {
+        if (contactsById.has(c.member_id)) continue; // newest first
+        contactsById.set(c.member_id, {
+          daysAgo: Math.round((Date.now() - new Date(c.contacted_at).getTime()) / 86400000),
+          channel: c.channel,
+          outcome: c.outcome,
+        });
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const membershipById = new Map<string, { name: string; daysToExpiry: number | null; justExpired: boolean }>();
+      for (const r of memRes.data ?? []) {
+        const cur = membershipById.get(r.mindbody_client_id);
+        if (cur && !cur.justExpired) continue; // keep the first current one
+        const justExpired = !r.still_returned && Date.now() - new Date(r.last_seen_at).getTime() < 14 * 86400000;
+        if (!r.still_returned && !justExpired) continue;
+        membershipById.set(r.mindbody_client_id, {
+          name: r.name ?? 'Membership',
+          daysToExpiry: r.expiration_date ? Math.round((Date.parse(r.expiration_date) - Date.parse(today)) / 86400000) : null,
+          justExpired,
+        });
+      }
+
+      const summaries = await generateSummariesForAtRisk(scored, { notesById, contactsById, membershipById });
       if (summaries.size > 0) {
         const now = new Date().toISOString();
         const entries = [...summaries.entries()];

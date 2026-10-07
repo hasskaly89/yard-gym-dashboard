@@ -23,6 +23,9 @@ export function classify(
   last56: number,
   prior56: number,
   daysSinceLastVisit: number | null,
+  // Last 14 days, for the recovery rule. Optional so existing callers keep
+  // today's behaviour.
+  last14?: number,
 ): TrendCategory {
   if (daysSinceLastVisit === null || daysSinceLastVisit >= 30) return 'STOPPED';
 
@@ -46,6 +49,9 @@ export function classify(
   // compare to a heavier 8 before it. Without this the board demotes its most
   // committed members for ordinary variation and buries the real leavers.
   if (daysSinceLastVisit <= 7 && last56 >= 16) return 'STABLE';
+  // Back at their old pace for a fortnight after a break: the 8-week ratio
+  // still remembers the break, the member has moved on. See RECOVERY_FACTOR.
+  if (daysSinceLastVisit <= 7 && last14 !== undefined && prior56 >= 4 && last14 >= prior56 / 4) return 'STABLE';
 
   // Two weeks absent is already at-risk regardless of what the ratio says.
   const floor: TrendCategory = daysSinceLastVisit >= 14 ? 'SLIDING' : 'STABLE';

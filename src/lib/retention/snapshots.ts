@@ -156,7 +156,7 @@ export async function backfillSnapshots(
         snapshot_date: date,
         score: h.score,
         band: h.band,
-        trend_category: classify(w.last56, w.prior56, dslv),
+        trend_category: classify(w.last56, w.prior56, dslv, w.last7 + w.prior7),
         ...w,
         days_since_last_visit: dslv,
       });

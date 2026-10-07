@@ -23,6 +23,10 @@ export type ScoredMember = {
   prior56: number;
   last7: number;
   prior7: number;
+  noShows30: number;
+  lateCancels30: number;
+  usualGapDays: number | null;
+  nextBookingAt: string | null;
   trendCategory: TrendCategory;
   // What was stored BEFORE this run — the summariser regenerates only when
   // something moved, and these are how it knows.
@@ -40,6 +44,7 @@ type PaidRow = {
   health_score: number | null;
   risk_band: RiskBand | null;
   ai_summary_at: string | null;
+  next_booking_at: string | null;
 };
 
 // Read-only: computes a health score for every paid, active member.
@@ -49,7 +54,7 @@ export async function computeScoresForPaidMembers(
   const { data: paid, error } = await supabase
     .from('members')
     .select(
-      'mindbody_client_id, first_name, last_name, last_visit_date, total_visit_count, health_score, risk_band, ai_summary_at',
+      'mindbody_client_id, first_name, last_name, last_visit_date, total_visit_count, health_score, risk_band, ai_summary_at, next_booking_at',
     )
     .eq('status', 'active')
     .eq('has_paid_membership', true)
@@ -72,6 +77,7 @@ export async function computeScoresForPaidMembers(
       prior56: 0,
       noShows30: 0,
       lateCancels30: 0,
+      usualGapDays: null,
     };
     const dslv = daysSinceSydney(r.last_visit_date);
     const { score, band, reasons } = computeHealthScore({
@@ -83,6 +89,8 @@ export async function computeScoresForPaidMembers(
       prior56: w.prior56,
       daysSinceLastVisit: dslv,
       totalVisitCount: r.total_visit_count ?? 0,
+      usualGapDays: w.usualGapDays,
+      noShows30: w.noShows30,
     });
     return {
       id: r.mindbody_client_id,
@@ -98,7 +106,11 @@ export async function computeScoresForPaidMembers(
       prior56: w.prior56,
       last7: w.last7,
       prior7: w.prior7,
-      trendCategory: classify(w.last56, w.prior56, dslv),
+      noShows30: w.noShows30,
+      lateCancels30: w.lateCancels30,
+      usualGapDays: w.usualGapDays,
+      nextBookingAt: r.next_booking_at,
+      trendCategory: classify(w.last56, w.prior56, dslv, w.last7 + w.prior7),
       prevScore: r.health_score,
       prevBand: r.risk_band,
       aiSummaryAt: r.ai_summary_at,

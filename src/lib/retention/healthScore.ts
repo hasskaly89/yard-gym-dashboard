@@ -25,6 +25,13 @@ export type HealthSignals = {
   prior56: number;
   daysSinceLastVisit: number | null; // null = no visit on record
   totalVisitCount: number;
+  // The member's own cadence: median days between their last attended
+  // classes (null until they have enough history). Recovr's "5.7x usual
+  // rhythm" — a once-a-week member 11 days away is on schedule; a daily
+  // member 11 days away has vanished. Optional so callers that have not
+  // computed it keep today's behaviour exactly.
+  usualGapDays?: number | null;
+  noShows30?: number;
 };
 
 // Visits per week, to one decimal — the unit the reasons and the AI narrative
@@ -52,6 +59,21 @@ const RECENCY_PENALTY = (days: number | null): number => {
 // Measured over 8 weeks vs the 8 before it — see the note on VisitWindows for
 // why 30-vs-30 was the wrong window. Ratio thresholds are unchanged; only the
 // span they are measured over is longer.
+// A member who took a break and is back at their old pace is not "sliding".
+// Hayley Gillard: 3-4 a week all winter, three weeks off in late August, five
+// sessions this week — and an 8-week ratio of 13:29 read as "down 55%". The
+// break is real but it is history; the last fortnight is the present. When
+// the last 14 days are at or above the prior 8-week rate, the trend penalty
+// fades: fully gone at a full fortnight of the old pace, halved at half.
+const RECOVERY_FACTOR = (last14: number, prior56: number): number => {
+  if (prior56 < 4 || last14 === 0) return 1;
+  const priorPer14 = prior56 / 4;
+  const ratio = last14 / priorPer14;
+  if (ratio >= 1) return 0;
+  if (ratio >= 0.5) return 0.5;
+  return 1;
+};
+
 const TREND_PENALTY = (last56: number, prior56: number): number => {
   if (prior56 < 4) {
     // Below ~0.5 visits/week there is no baseline worth taking a ratio
@@ -67,6 +89,30 @@ const TREND_PENALTY = (last56: number, prior56: number): number => {
   if (ratio >= 0.55) return 8;
   if (ratio >= 0.25) return 20;
   return 32;
+};
+
+// How far the current absence is past the member's own rhythm, as a penalty.
+// Deliberately smaller than the recency tiers it sits beside: it refines them,
+// it does not replace them. Capped at 15 so on its own it moves a member at
+// most one band, and it only applies once the gap is a real multiple — 2x
+// would flag anyone who skipped one session.
+const RHYTHM_PENALTY = (days: number | null, usualGap: number | null | undefined): number => {
+  if (days === null || !usualGap || usualGap <= 0 || days <= 7) return 0;
+  const multiple = days / usualGap;
+  if (multiple >= 6) return 15;
+  if (multiple >= 4) return 10;
+  if (multiple >= 3) return 5;
+  return 0;
+};
+
+// Booked and didn't show. A no-show is a stronger leaving signal than not
+// booking at all — they meant to come and something stopped them. Rows the
+// sync used to throw away; now they count, modestly.
+const NO_SHOW_PENALTY = (n: number | undefined): number => {
+  if (!n) return 0;
+  if (n >= 4) return 10;
+  if (n >= 2) return 5;
+  return 0;
 };
 
 const FREQUENCY_PENALTY = (last30: number): number => {
@@ -100,10 +146,12 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 
 export function computeHealthScore(s: HealthSignals): HealthResult {
   const recency = RECENCY_PENALTY(s.daysSinceLastVisit);
-  const trend = TREND_PENALTY(s.last56, s.prior56);
+  const trend = Math.round(TREND_PENALTY(s.last56, s.prior56) * RECOVERY_FACTOR(s.last7 + s.prior7, s.prior56));
   const frequency = FREQUENCY_PENALTY(s.last30);
+  const rhythm = RHYTHM_PENALTY(s.daysSinceLastVisit, s.usualGapDays);
+  const noShows = NO_SHOW_PENALTY(s.noShows30);
 
-  const score = clamp(Math.round(100 - (recency + trend + frequency)), 0, 100);
+  const score = clamp(Math.round(100 - (recency + trend + frequency + rhythm + noShows)), 0, 100);
   const band = bandFor(score, s.daysSinceLastVisit);
 
   // Reasons, ordered by the penalty each carried (biggest driver first).
@@ -124,14 +172,27 @@ export function computeHealthScore(s: HealthSignals): HealthResult {
       text: `Stopped attending — 0 sessions in the last 8 weeks (was ${perWeek(s.prior56, 56)}/week)`,
     });
   } else if (s.prior56 >= 4 && s.last56 < s.prior56) {
+    const recovered = RECOVERY_FACTOR(s.last7 + s.prior7, s.prior56) === 0;
     drivers.push({
-      weight: trend,
-      text: `Attendance down to ${perWeek(s.last56, 56)}/week from ${perWeek(s.prior56, 56)}/week over the 8 weeks before`,
+      weight: recovered ? 1 : trend,
+      text: recovered
+        ? `Back at pace — ${s.last7 + s.prior7} sessions in the last 2 weeks after a quieter spell`
+        : `Attendance down to ${perWeek(s.last56, 56)}/week from ${perWeek(s.prior56, 56)}/week over the 8 weeks before`,
     });
   }
 
   if (s.last30 > 0 && s.last30 < 4) {
     drivers.push({ weight: frequency, text: `Low frequency — only ${s.last30} session(s) in the last 30 days` });
+  }
+
+  if (rhythm > 0 && s.daysSinceLastVisit !== null && s.usualGapDays) {
+    const mult = Math.round((s.daysSinceLastVisit / s.usualGapDays) * 10) / 10;
+    const every = s.usualGapDays < 1.5 ? 'daily' : `every ${Math.round(s.usualGapDays)} days`;
+    drivers.push({ weight: rhythm, text: `Current gap ${mult}x usual rhythm (${every})` });
+  }
+
+  if (noShows > 0) {
+    drivers.push({ weight: noShows, text: `${s.noShows30} no-shows in the last 30 days` });
   }
 
   drivers.sort((a, b) => b.weight - a.weight);

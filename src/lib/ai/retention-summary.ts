@@ -9,13 +9,32 @@ import type { ScoredMember } from '@/lib/retention/health';
 export type SummaryInput = ScoredMember & {
   recentNotes?: string[];
   lastContactDaysAgo?: number | null;
+  lastContactChannel?: string | null;
+  lastContactOutcome?: string | null;
+  membership?: { name: string; daysToExpiry: number | null; justExpired: boolean } | null;
 };
+
+// Recovr's own prompt shipped a sales receipt — partial card number, auth
+// code, amount — straight to the model because staff notes were pasted in
+// verbatim. Notes here are staff-typed, but the same can happen; strip the
+// shapes that look like payment data before anything reaches Anthropic.
+export function redactForModel(text: string): string {
+  return text
+    .replace(/\b(?:\d[ -]?){13,19}\b/g, '[card]')
+    .replace(/\*{2,}\d{3,4}\b/g, '[card]')
+    .replace(/\b(auth(?:orization)?\s*(?:#|code|no\.?)?\s*:?\s*)\d{4,}/gi, '$1[redacted]')
+    .replace(/\$\s?\d[\d,]*(?:\.\d{2})?/g, '[amount]');
+}
+
+const SYD = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 
 const SYSTEM = `You write short retention notes for staff at The Yard Gym (a gym in Edensor Park, Sydney) who are about to call an at-risk member.
 Given a member's attendance data and computed risk reasons, write EXACTLY:
 1. One sentence explaining why they're at risk (specific, grounded in the numbers you're given — do not invent facts).
 2. One sentence with a concrete suggested action for the call.
-Tone: warm, direct, practical. Use the member's first name. No preamble, no bullet points, no more than ~45 words total.`;
+Tone: warm, direct, practical. Use the member's first name. No preamble, no bullet points, no more than ~45 words total.
+These are notes FOR STAFF about the member — write "Greg hasn't…", never "Greg, you haven't…".
+When given a next booking, a package expiry, a score change since a date, a usual-rhythm gap, or a recent staff note, prefer those over generic attendance figures — they are what makes the call specific.`;
 
 export async function generateRetentionSummary(
   m: SummaryInput,
@@ -35,8 +54,16 @@ export async function generateRetentionSummary(
     // phrasing staff find legible on a call ("0.6 a week, down from 1.5").
     visitsPerWeekNow: perWeek(m.last56, 56),
     visitsPerWeekPrior8Weeks: perWeek(m.prior56, 56),
-    recentStaffNotes: m.recentNotes ?? [],
+    usualGapDays: m.usualGapDays,
+    noShowsLast30Days: m.noShows30,
+    lateCancelsLast30Days: m.lateCancels30,
+    // Pre-formatted in gym time so the model does no timezone arithmetic.
+    nextBooking: m.nextBookingAt ? SYD.format(new Date(m.nextBookingAt)) : null,
+    membership: m.membership ?? null,
+    recentStaffNotes: (m.recentNotes ?? []).map(redactForModel),
     lastContactedDaysAgo: m.lastContactDaysAgo ?? null,
+    lastContactChannel: m.lastContactChannel ?? null,
+    lastContactOutcome: m.lastContactOutcome ? redactForModel(m.lastContactOutcome) : null,
   };
 
   const msg = await client.messages.create({
@@ -72,7 +99,12 @@ export function needsSummary(m: ScoredMember): boolean {
 // member id -> summary. No-ops (empty map) when no API key is set.
 export async function generateSummariesForAtRisk(
   members: ScoredMember[],
-  opts?: { concurrency?: number; notesById?: Map<string, string[]> },
+  opts?: {
+    concurrency?: number;
+    notesById?: Map<string, string[]>;
+    contactsById?: Map<string, { daysAgo: number; channel: string | null; outcome: string | null }>;
+    membershipById?: Map<string, { name: string; daysToExpiry: number | null; justExpired: boolean }>;
+  },
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (!getAnthropic()) return out;
@@ -84,9 +116,14 @@ export async function generateSummariesForAtRisk(
     const batch = atRisk.slice(i, i + concurrency);
     const results = await Promise.allSettled(
       batch.map(async (m) => {
+        const c = opts?.contactsById?.get(m.id);
         const summary = await generateRetentionSummary({
           ...m,
           recentNotes: opts?.notesById?.get(m.id),
+          lastContactDaysAgo: c?.daysAgo ?? null,
+          lastContactChannel: c?.channel ?? null,
+          lastContactOutcome: c?.outcome ?? null,
+          membership: opts?.membershipById?.get(m.id) ?? null,
         });
         return { id: m.id, summary };
       }),

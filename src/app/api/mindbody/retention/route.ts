@@ -268,6 +268,7 @@ export async function GET() {
       prior56: 0,
       noShows30: 0,
       lateCancels30: 0,
+      usualGapDays: null,
     };
     // Trend is the 8-week ratio the board classifies on, so the percentage on
     // the card and the column it sits in can never disagree.
@@ -283,6 +284,8 @@ export async function GET() {
       prior56: c.prior56,
       daysSinceLastVisit: dslv,
       totalVisitCount: m.total_visit_count ?? 0,
+      usualGapDays: c.usualGapDays,
+      noShows30: c.noShows30,
     });
     const atRisk = health.band === 'high' || health.band === 'medium';
     const stored = summaries.get(m.mindbody_client_id);
@@ -311,7 +314,7 @@ export async function GET() {
       lastName: m.last_name ?? '',
       email: m.email ?? '',
       mobilePhone: m.phone ?? '',
-      trendCategory: classify(c.last56, c.prior56, dslv),
+      trendCategory: classify(c.last56, c.prior56, dslv, c.last7 + c.prior7),
       last30d: c.last30,
       prior30d: c.prior30,
       last7d: c.last7,

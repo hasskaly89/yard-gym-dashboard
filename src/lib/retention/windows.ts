@@ -19,7 +19,22 @@ export type VisitWindows = {
   // Missed classes in the last 30 days — the rows the sync used to discard.
   noShows30: number;
   lateCancels30: number;
+  // Median days between the member's last attended classes (up to 12 gaps),
+  // null with fewer than 4 attended in the lookback. Their own cadence.
+  usualGapDays: number | null;
 };
+
+// Median gap between consecutive timestamps (ms in, days out).
+export function medianGapDays(sortedMs: number[]): number | null {
+  const recent = sortedMs.slice(-13);
+  if (recent.length < 4) return null;
+  const gaps: number[] = [];
+  for (let i = 1; i < recent.length; i++) gaps.push((recent[i] - recent[i - 1]) / DAY);
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  const med = gaps.length % 2 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+  return Math.round(med * 10) / 10;
+}
 
 const DAY = 86400000;
 
@@ -49,9 +64,12 @@ export async function tallyVisitWindows(
       prior56: 0,
       noShows30: 0,
       lateCancels30: 0,
+      usualGapDays: null,
     });
   }
   if (ids.length === 0) return counts;
+  // Attended timestamps per member, ascending, for the rhythm measure.
+  const attendedMs = new Map<string, number[]>();
 
   // PostgREST caps at 1000 rows/request; page until exhausted.
   const PAGE = 1000;
@@ -81,6 +99,7 @@ export async function tallyVisitWindows(
         }
         continue;
       }
+      (attendedMs.get(r.mindbody_client_id) ?? attendedMs.set(r.mindbody_client_id, []).get(r.mindbody_client_id)!).push(ts);
       if (ts >= last7Start) bucket.last7++;
       else if (ts >= last14Start) bucket.prior7++;
       if (ts >= last30Start) bucket.last30++;
@@ -92,6 +111,11 @@ export async function tallyVisitWindows(
     if (rows.length < PAGE) break;
   }
 
+  for (const [id, ms] of attendedMs) {
+    const bucket = counts.get(id);
+    if (bucket) bucket.usualGapDays = medianGapDays(ms); // rows arrive ascending
+  }
+
   return counts;
 }
 
@@ -99,7 +123,7 @@ export async function tallyVisitWindows(
 // arbitrary instant. The snapshot backfill replays 90 past days from one fetch
 // instead of ninety.
 export function tallyWindowsAsOf(visitMs: number[], asOfMs: number): VisitWindows {
-  const w: VisitWindows = { last7: 0, prior7: 0, last30: 0, prior30: 0, last56: 0, prior56: 0, noShows30: 0, lateCancels30: 0 };
+  const w: VisitWindows = { last7: 0, prior7: 0, last30: 0, prior30: 0, last56: 0, prior56: 0, noShows30: 0, lateCancels30: 0, usualGapDays: null };
   for (const ts of visitMs) {
     if (ts > asOfMs) continue;
     const age = asOfMs - ts;
@@ -110,5 +134,6 @@ export function tallyWindowsAsOf(visitMs: number[], asOfMs: number): VisitWindow
     if (age < 56 * DAY) w.last56++;
     else if (age < 112 * DAY) w.prior56++;
   }
+  w.usualGapDays = medianGapDays(visitMs.filter((t) => t <= asOfMs).sort((a, b) => a - b));
   return w;
 }

@@ -20,17 +20,20 @@ async function ghlFetch(path: string, options: RequestInit = {}) {
   return res.json()
 }
 
-async function ghlV2Fetch(path: string) {
+async function ghlV2Fetch(path: string, init?: { method?: 'POST'; body?: unknown }) {
   // GHL v2 rate limits aggressively — retry on 429 with linear backoff
   // (1s, then 2s) before giving up. Real not-found responses (404) and other
   // errors bubble immediately.
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${V2}${path}`, {
+      method: init?.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${PRIVATE_TOKEN()}`,
         Version: '2021-07-28',
         Accept: 'application/json',
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       },
+      ...(init?.body ? { body: JSON.stringify(init.body) } : {}),
     })
     if (res.status === 429 && attempt < 2) {
       await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
@@ -197,4 +200,26 @@ export async function triggerGHLWebhook(
   }
 
   return res.json().catch(() => ({ ok: true }))
+}
+
+// Has this contact opted out of SMS? GHL records a STOP reply as DND on the
+// contact. Recovr honours it across workflow, composer and bulk send; so do
+// we, before anything is drafted, let alone sent.
+export async function isGHLContactOptedOut(contactId: string): Promise<boolean> {
+  const data = await ghlV2Fetch(`/contacts/${encodeURIComponent(contactId)}`)
+  const c = data?.contact ?? data
+  if (c?.dnd === true) return true
+  const sms = c?.dndSettings?.SMS?.status
+  return sms === 'active' || sms === 'permanent'
+}
+
+// Send one SMS to a contact through the location's conversation — the same
+// LeadConnector pipe Recovr's composer uses. Only ever called inside
+// dispatch(), which decides whether a send may happen at all.
+export async function sendGHLSms(contactId: string, message: string): Promise<{ messageId: string | null }> {
+  const data = await ghlV2Fetch('/conversations/messages', {
+    method: 'POST',
+    body: { type: 'SMS', contactId, message },
+  })
+  return { messageId: data?.messageId ?? data?.id ?? null }
 }

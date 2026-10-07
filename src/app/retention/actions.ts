@@ -4,6 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { createClient } from '@/lib/supabase/server';
 import { displayNameForEmail } from '@/lib/retention/users';
 import type { Band } from '@/lib/retention/priority';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { draftMessage, categoryFor, type DraftCategory } from '@/lib/ai/draft-message';
+import { sendGHLSms, isGHLContactOptedOut } from '@/lib/ghl/api';
+import { dispatch } from '@/lib/outbound/dispatch';
+import { bookingWhen } from '@/lib/retention/reasons';
 
 type Channel = 'sms' | 'call' | 'in_person' | 'ghl' | 'other';
 
@@ -220,4 +225,148 @@ export async function unassignMember(input: { memberId: string }): Promise<Actio
 
   revalidatePath('/retention');
   return { ok: true, data: undefined };
+}
+
+// The member's usual class, from their last attended visits: the weekday and
+// start time they come to most. "Monday 6:30 pm" — what the house closing
+// line needs. Null below four visits.
+async function usualSlotFor(memberId: string): Promise<string | null> {
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from('member_visits')
+    .select('visit_at')
+    .eq('mindbody_client_id', memberId)
+    .eq('status', 'attended')
+    .order('visit_at', { ascending: false })
+    .limit(16);
+  const rows = data ?? [];
+  if (rows.length < 4) return null;
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    const d = new Date(r.visit_at);
+    const key =
+      d.toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', weekday: 'long' }) +
+      ' ' +
+      d.toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' }).toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const [slot, n] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return n >= 2 ? slot : null;
+}
+
+export type DraftResult = {
+  text: string;
+  category: DraftCategory;
+  optedOut: boolean;
+  usualSlot: string | null;
+};
+
+// Drafts an SMS for the drawer. Reads only; nothing is sent, nothing stored.
+export async function draftSms(input: {
+  memberId: string;
+  firstName: string;
+  band: string;
+  daysSinceLastVisit: number | null;
+  totalVisitCount: number;
+  last56: number;
+  prior56: number;
+  nextBookingAt: string | null;
+  packageName: string | null;
+  packageEndsInDays: number | null;
+  isIntro: boolean;
+  ghlContactId: string | null;
+}): Promise<ActionResult<DraftResult>> {
+  const { user, error } = await requireUser();
+  if (!user) return { ok: false, error: error ?? 'No user' };
+
+  const admin = createAdminClient();
+  const [usualSlot, note, optedOut] = await Promise.all([
+    usualSlotFor(input.memberId),
+    admin
+      .from('member_notes')
+      .select('note')
+      .eq('member_id', input.memberId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then((r) => r.data?.note ?? null),
+    input.ghlContactId ? isGHLContactOptedOut(input.ghlContactId).catch(() => false) : Promise.resolve(false),
+  ]);
+
+  const category = categoryFor({
+    band: input.band,
+    daysSinceLastVisit: input.daysSinceLastVisit,
+    totalVisitCount: input.totalVisitCount,
+    last56: input.last56,
+    prior56: input.prior56,
+    isIntro: input.isIntro,
+  });
+  const text = await draftMessage({
+    firstName: input.firstName,
+    category,
+    daysSinceLastVisit: input.daysSinceLastVisit,
+    usualSlot,
+    nextBooking: input.nextBookingAt ? bookingWhen(input.nextBookingAt, Date.now()) : null,
+    packageName: input.packageName,
+    packageEndsInDays: input.packageEndsInDays,
+    totalSessions: input.totalVisitCount,
+    recentNote: note,
+    signOff: displayNameForEmail(user.email),
+  });
+  if (!text) return { ok: false, error: 'AI drafting is not configured' };
+  return { ok: true, data: { text, category, optedOut, usualSlot } };
+}
+
+// Sends an SMS the staff member has read and approved, through GHL, through
+// dispatch() — so outside production it is logged and not delivered. A sent
+// message is a contact: it enters member_contacts as channel 'sms' with the
+// text as the outcome, which is what the queues, the timeline and (later) the
+// Results engine read.
+export async function sendSms(input: {
+  memberId: string;
+  memberName: string;
+  band: Band;
+  ghlContactId: string;
+  text: string;
+}): Promise<ActionResult<{ status: string }>> {
+  const { supabase, user, error } = await requireUser();
+  if (!supabase || !user) return { ok: false, error: error ?? 'No user' };
+
+  const text = input.text.trim();
+  if (!text) return { ok: false, error: 'Empty message' };
+  if (text.length > 320) return { ok: false, error: 'Message is over two SMS segments (320 characters)' };
+
+  // Checked again at send time, not just at draft time.
+  if (await isGHLContactOptedOut(input.ghlContactId).catch(() => false)) {
+    return { ok: false, error: 'This member has opted out of SMS (STOP). Not sent.' };
+  }
+
+  const r = await dispatch({
+    channel: 'ghl_sms',
+    memberId: input.memberId,
+    recipient: input.ghlContactId,
+    purpose: 'retention:sms',
+    payload: { text, by: user.email ?? user.id },
+    send: async (target) => {
+      await sendGHLSms(target, text);
+    },
+  });
+  if (r.status === 'failed') return { ok: false, error: r.reason ?? 'Send failed' };
+
+  // Log it as a contact whatever happened at the gate: on a laptop the row says
+  // "would have sent", and the member is held out of the queues for a week
+  // exactly as if it had. (A suppressed send on a laptop is still a staff
+  // decision to contact.)
+  await supabase.from('member_contacts').insert({
+    member_id: input.memberId,
+    member_name: input.memberName,
+    band: input.band,
+    contacted_by: user.id,
+    contacted_by_name: displayNameForEmail(user.email),
+    channel: 'sms',
+    outcome: (r.status === 'sent' ? '' : `[${r.status}] `) + text,
+  });
+
+  revalidatePath('/retention');
+  return { ok: true, data: { status: r.status } };
 }

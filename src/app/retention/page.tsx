@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import TaskQueue from '@/components/retention/TaskQueue';
 import MemberTimeline from '@/components/retention/MemberTimeline';
+import SmsComposer from '@/components/retention/SmsComposer';
 import type { QueueMember, QueueMembership } from '@/lib/retention/queues';
 import type { ScoreDelta } from '@/lib/retention/scoreDelta';
 import { HEALTH_STYLE } from '@/components/retention/bands';
@@ -41,6 +42,7 @@ interface RetentionMember {
   daysSinceLastVisit: number | null;
   aiSummary: string | null;
   aiSummaryAt: string | null;
+  totalVisitCount: number;
   nextBookingAt: string | null;
   noShows30: number;
   lateCancels30: number;
@@ -350,6 +352,7 @@ function MemberDrawer({
   onCopy,
   onLog,
   onSnooze,
+  onSent,
   onClose,
 }: {
   member: RetentionMember;
@@ -362,6 +365,7 @@ function MemberDrawer({
   onCopy: (m: RetentionMember) => void;
   onLog: (m: QueueMember, opts?: LogOptions) => void;
   onSnooze: (m: QueueMember) => void;
+  onSent: () => void;
   onClose: () => void;
 }) {
   const showGhl = Boolean(ghlLocationId && ghlPortalUrl && member.ghlContactId);
@@ -497,6 +501,7 @@ function MemberDrawer({
               Snooze 7d
             </button>
           </div>
+          <SmsComposer member={member} onSent={onSent} />
           <MemberTimeline
             memberId={member.id}
             memberName={`${member.firstName} ${member.lastName}`.trim()}
@@ -857,6 +862,7 @@ export default function RetentionPage() {
           onCopy={copyPhone}
           onLog={handleLog}
           onSnooze={handleSnooze}
+          onSent={loadContactState}
           onClose={() => setSelectedId(null)}
         />
       )}

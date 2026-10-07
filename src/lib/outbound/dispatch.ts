@@ -17,7 +17,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 // address/number instead, with the intended recipient recorded. That is how a
 // send path is proven end to end without a member ever receiving a test.
 
-export type OutboundChannel = 'ghl_webhook' | 'ghl_tag' | 'email';
+export type OutboundChannel = 'ghl_webhook' | 'ghl_tag' | 'ghl_sms' | 'email';
 
 export type OutboundRequest = {
   channel: OutboundChannel;

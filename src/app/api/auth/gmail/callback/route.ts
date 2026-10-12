@@ -6,7 +6,10 @@ import { exchangeCodeForRefreshToken, storeRefreshToken } from '@/lib/email/gmai
 // token and stores it, then sends the admin back to the dashboard.
 export async function GET(request: Request) {
   const me = await getCurrentUser();
-  if (!me || me.role !== 'admin') {
+  if (!me) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (me.role !== 'admin') {
     return NextResponse.json({ error: 'Not authorised' }, { status: 403 });
   }
 

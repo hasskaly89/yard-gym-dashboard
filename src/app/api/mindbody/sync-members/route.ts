@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
 import { syncMindBodyMembers } from '@/lib/mindbody/sync'
+import { bearerAuthorized } from '@/lib/auth/machine-auth'
 
 export async function POST(request: Request) {
-  // Verify secret header for cron/webhook security
-  const authHeader = request.headers.get('authorization')
-  const secret = process.env.SYNC_SECRET
-
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  if (!bearerAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

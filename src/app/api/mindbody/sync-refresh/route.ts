@@ -12,6 +12,7 @@ import {
 } from '@/lib/mindbody/sync-visits';
 import { resetMBCallCount, getMBCallCount } from '@/lib/mindbody/api';
 import { markRun } from '@/lib/mindbody/sync-state';
+import { bearerAuthorized } from '@/lib/auth/machine-auth';
 import { backfillSnapshots } from '@/lib/retention/snapshots';
 import { backfillContactResults } from '@/lib/retention/results';
 import { computeScoresForPaidMembers } from '@/lib/retention/health';
@@ -35,9 +36,7 @@ export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  const secret = process.env.SYNC_SECRET ?? process.env.CRON_SECRET;
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  if (!bearerAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

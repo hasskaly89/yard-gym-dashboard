@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { webhookAuthorized } from '@/lib/auth/mindbody-signature'
 import { checkSessionMilestone, shouldResetInactivity } from '@/lib/milestones/detect'
 import { triggerMilestone } from '@/lib/milestones/trigger'
 import { createOrSyncGHLContact } from '@/lib/ghl/api'
 
 export async function POST(req: NextRequest) {
+  const raw = await req.text()
+  if (!webhookAuthorized(req, raw)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   const supabase = createAdminClient()
 
   let body: any
   try {
-    body = await req.json()
+    body = JSON.parse(raw)
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth/api-guard';
 import {
   buildSnapshot,
   type MetaAd,
@@ -354,6 +355,9 @@ async function fetchLive(range: string): Promise<MetaAdsData> {
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 export async function GET(request: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const url = new URL(request.url);
   const rangeParam = url.searchParams.get('range') ?? 'last_30d';
   const range = VALID_RANGES.has(rangeParam) ? rangeParam : 'last_30d';

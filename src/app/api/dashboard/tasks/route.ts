@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/api-guard';
 import { taskId } from '@/lib/dashboard/taskId';
 
 // Marks a dashboard task complete/snoozed, or undoes either. Tasks have no
 // stable id (regenerated nightly from AI output) so state is keyed by a
 // deterministic hash of (scope, title, source) — see lib/dashboard/taskId.
 export async function POST(req: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const body = await req.json().catch(() => null);
   const { scope, title, source, action, days } = body ?? {};
 

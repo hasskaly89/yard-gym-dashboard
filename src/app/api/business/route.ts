@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/profile';
+import { requireUser } from '@/lib/auth/api-guard';
 import { getMBToken } from '@/lib/mindbody/api';
 import { resolvePeriod, isPeriodKey, type Period } from '@/lib/periods';
 
@@ -240,11 +240,9 @@ function redact(data: BusinessSummary, canSeeMoney: boolean): BusinessSummary {
 }
 
 export async function GET(request: Request) {
-  // /api is outside the proxy's auth matcher, so this gates itself.
-  const me = await getCurrentUser();
-  if (!me) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+  const me = auth.user;
   // Revenue is owner-level information. Visits and leads are operational and
   // useful to a coach; takings are not, so they're stripped rather than the
   // whole endpoint refused — a front-desk profile still gets a working tile.

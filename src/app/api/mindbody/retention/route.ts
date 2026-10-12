@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/api-guard';
 import { tallyVisitWindows } from '@/lib/retention/windows';
 import { computeHealthScore, type RiskBand } from '@/lib/retention/healthScore';
 import { daysSinceSydney } from '@/lib/retention/dates';
@@ -183,6 +184,9 @@ async function fetchSummaries(
 }
 
 export async function GET() {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const supabase = createAdminClient();
 
   const { data: paidRows, error: paidErr } = await supabase

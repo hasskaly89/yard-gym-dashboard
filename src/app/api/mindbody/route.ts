@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/api-guard';
 import { tallyVisitWindows } from '@/lib/retention/windows';
 
 // COST — MindBody bills $0.002/call. This endpoint USED TO recompute every
@@ -97,6 +98,9 @@ async function computeCountsFromSupabase(): Promise<{ counts: Counts; updatedAt:
 }
 
 export async function GET() {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   try {
     const { counts, updatedAt } = await computeCountsFromSupabase();
     return NextResponse.json({ mock: false, cached: true, source: 'supabase', counts, updatedAt });

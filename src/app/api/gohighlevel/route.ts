@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth/api-guard';
 
 const V1 = 'https://rest.gohighlevel.com/v1';
 const V2 = 'https://services.leadconnectorhq.com';
@@ -64,6 +65,9 @@ async function countNewContacts(days: number): Promise<number> {
 }
 
 export async function GET() {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   if (!API_KEY || !LOCATION_ID) {
     return NextResponse.json({ mock: true });
   }

@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { toZonedTime, fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { startOfDay, endOfDay } from 'date-fns';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { bearerAuthorized } from '@/lib/auth/machine-auth';
 
 // Uses Gmail SMTP via the same env vars as /api/timesheets/route.ts:
 // SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS. No additional setup needed.
@@ -50,10 +51,9 @@ function sydneyDayBoundsUtc(
 }
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  const cronSecret = process.env.CRON_SECRET ?? process.env.SYNC_SECRET;
-  const isVercelCron = req.headers.get('x-vercel-cron') === '1';
-  if (!isVercelCron && authHeader !== `Bearer ${cronSecret}`) {
+  // Vercel sends Authorization: Bearer CRON_SECRET when that env var is set.
+  // x-vercel-cron is not a secret and is not accepted on its own.
+  if (!bearerAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

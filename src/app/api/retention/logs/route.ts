@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireUser } from '@/lib/auth/api-guard';
 import type { Band } from '@/lib/retention/priority';
 
 export type LogRow = {
@@ -22,12 +23,10 @@ export type LogsResponse = {
 // presets while keeping the payload bounded. Staff/band/name filtering happens
 // client-side on this set.
 export async function GET(request: Request) {
-  const supabase = await createClient();
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const supabase = await createClient();
 
   const { searchParams } = new URL(request.url);
   const since =

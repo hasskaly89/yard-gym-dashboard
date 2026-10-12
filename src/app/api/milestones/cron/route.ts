@@ -15,6 +15,7 @@ import {
 import { isDue, markRun } from '@/lib/mindbody/sync-state'
 import { runRetentionScoring } from '@/lib/retention/run-scoring'
 import { runBriefs } from '@/lib/dashboard/run-briefs'
+import { bearerAuthorized } from '@/lib/auth/machine-auth'
 
 // ⚠️ DO NOT RUN THIS ROUTE LOCALLY. It is NOT read-only — it sends real
 // messages to real members via triggerMilestone() → GHL webhooks (birthday,
@@ -52,24 +53,19 @@ export const maxDuration = 300
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  // Auth: Vercel Cron sends CRON_SECRET, or use SYNC_SECRET for manual calls
-  const authHeader = req.headers.get('authorization')
-  const cronSecret = process.env.CRON_SECRET ?? process.env.SYNC_SECRET
-  const isVercelCron = req.headers.get('x-vercel-cron') === '1'
-
-  // This route was scheduled daily for months and produced NOTHING — no synced
-  // visits, no milestone messages, no refreshed scores — with no way to tell
-  // whether Vercel was invoking it at all. Log the auth decision on every hit so
-  // a single log line answers that. Vercel only attaches an Authorization header
-  // when CRON_SECRET is set as an env var; without it this route depends
-  // entirely on the x-vercel-cron header, and `cronCalled=true authOk=false`
-  // below is the signature of that failure.
+  // Auth: Vercel Cron sends `Authorization: Bearer ${CRON_SECRET}` when that
+  // env var is set. SYNC_SECRET still works for a manual call. The
+  // x-vercel-cron header is logged so a missing secret is visible, but it is
+  // not accepted — anyone can set it.
+  const authorized = bearerAuthorized(req)
   console.log(
-    `[cron] auth check — cronHeader=${isVercelCron} hasAuthHeader=${!!authHeader} ` +
-      `cronSecretConfigured=${!!process.env.CRON_SECRET} syncSecretConfigured=${!!process.env.SYNC_SECRET}`,
+    `[cron] auth check — vercelCronHeader=${req.headers.get('x-vercel-cron') === '1'} ` +
+      `hasAuthHeader=${!!req.headers.get('authorization')} ` +
+      `cronSecretConfigured=${!!process.env.CRON_SECRET} syncSecretConfigured=${!!process.env.SYNC_SECRET} ` +
+      `authorized=${authorized}`,
   )
 
-  if (!isVercelCron && authHeader !== `Bearer ${cronSecret}`) {
+  if (!authorized) {
     console.error('[cron] REJECTED 401 — scheduled run did no work. Set CRON_SECRET in Vercel.')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

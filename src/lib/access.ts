@@ -55,6 +55,21 @@ export function superAdminEmails(): string[] {
     .filter(Boolean);
 }
 
+// Who may log in at all. Same rules the proxy has always used: an exact email,
+// or *@domain for every address on that domain. A profile row is the other
+// way in (an admin added them) and is checked separately.
+export function isEmailAllowlisted(email: string): boolean {
+  const userEmail = email.trim().toLowerCase();
+  if (!userEmail) return false;
+  const patterns = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return patterns.some((p) =>
+    p.startsWith('*@') ? userEmail.endsWith(p.slice(1)) : p === userEmail,
+  );
+}
+
 export type Role = 'admin' | 'staff';
 export type Access = { role: Role; allowedPages: PageKey[] };
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/api-guard';
 
 // Milestone bands (existing list from src/lib/milestones/detect.ts).
 // Each member is grouped into their HIGHEST band achieved.
@@ -44,6 +45,9 @@ function labelFor(band: MilestoneBand): string {
 }
 
 export async function GET() {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const supabase = createAdminClient();
 
   const { data: members, error } = await supabase

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireUser } from '@/lib/auth/api-guard';
 
 export type NoteRow = {
   id: string;
@@ -15,12 +16,10 @@ export type NotesResponse = {
 
 // Running comment thread for a single client, newest first.
 export async function GET(request: Request) {
-  const supabase = await createClient();
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const supabase = await createClient();
 
   const { searchParams } = new URL(request.url);
   const memberId = searchParams.get('memberId');

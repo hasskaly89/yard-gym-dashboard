@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { requireUser } from '@/lib/auth/api-guard';
 import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
 
 const TZ = 'Australia/Sydney';
@@ -70,6 +71,9 @@ function parseMonthParam(monthParam: string | null): {
 }
 
 export async function GET(req: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const url = new URL(req.url);
   const monthParam = url.searchParams.get('month');
 

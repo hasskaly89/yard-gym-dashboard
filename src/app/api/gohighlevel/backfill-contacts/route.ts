@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { bearerAuthorized } from '@/lib/auth/machine-auth';
 import { findGHLContactByEmail, findGHLContactByPhone } from '@/lib/ghl/api';
 
 // One-off backfill: links existing members to their GHL contact by email/phone
@@ -23,9 +24,7 @@ const DELAY_MS = 250;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function POST(req: Request) {
-  const authHeader = req.headers.get('authorization');
-  const secret = process.env.SYNC_SECRET ?? process.env.CRON_SECRET;
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  if (!bearerAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

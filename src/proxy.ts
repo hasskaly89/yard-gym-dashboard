@@ -1,10 +1,29 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { computeAccess, canAccess, pathToPageKey } from '@/lib/access'
+import { computeAccess, canAccess, isEmailAllowlisted, pathToPageKey } from '@/lib/access'
+import { bearerAuthorized, isMachineRoute, webhookTokenAuthorized } from '@/lib/auth/machine-auth'
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Cron, manual sync, and the Mindbody webhook have no session. Decide that
+  // before touching Supabase, so a login outage cannot stop the nightly sync.
+  if (pathname.startsWith('/api') && isMachineRoute(pathname)) {
+    const webhook = pathname === '/api/mindbody/webhooks' || pathname === '/api/mindbody/webhooks/'
+    const signed =
+      webhook &&
+      !!request.headers.get('x-mindbody-signature') &&
+      !!process.env.MINDBODY_WEBHOOK_SIGNATURE_KEY
+    const allowed =
+      bearerAuthorized(request, webhook ? ['MINDBODY_WEBHOOK_SECRET'] : []) ||
+      (webhook && webhookTokenAuthorized(request)) ||
+      signed
+    if (!allowed) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    return NextResponse.next()
+  }
 
   let supabaseResponse = NextResponse.next({ request })
 
@@ -43,16 +62,8 @@ export async function proxy(request: NextRequest) {
   // Supports two patterns per entry:
   //   - exact email          e.g. hasskaly89@gmail.com
   //   - wildcard at a domain e.g. *@theyardgym.com.au (allows every email on that domain)
-  const allowedPatterns = (process.env.ADMIN_EMAILS ?? '')
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
   const userEmail = user?.email?.toLowerCase() ?? ''
-  const inAdminEmails =
-    userEmail !== '' &&
-    allowedPatterns.some((p) =>
-      p.startsWith('*@') ? userEmail.endsWith(p.slice(1)) : p === userEmail,
-    )
+  const inAdminEmails = isEmailAllowlisted(userEmail)
 
   // Load the user's profile once — used for BOTH the allowlist (a profile row
   // means an admin added them via Team Access) and per-page permissions below.
@@ -69,6 +80,19 @@ export async function proxy(request: NextRequest) {
   // Allowed to log in if in the ADMIN_EMAILS env allowlist OR an admin has
   // added them (they have a profile row). This lets admins add staff in-app.
   const isAllowed = userEmail !== '' && (inAdminEmails || !!prof)
+
+  function json401() {
+    const res = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c))
+    return res
+  }
+
+  // Data routes need the same logged-in allowlisted session the pages
+  // require, and must answer 401 rather than a redirect to /login.
+  if (pathname.startsWith('/api')) {
+    if (!user || !isAllowed) return json401()
+    return supabaseResponse
+  }
 
   // Not logged in → bounce to /login
   if (!user && !isPublic) {
@@ -114,5 +138,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }

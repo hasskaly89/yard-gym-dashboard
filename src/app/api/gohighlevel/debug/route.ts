@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth/api-guard';
 
 const LOCATION_ID = process.env.GHL_LOCATION_ID ?? '';
 const PRIVATE_TOKEN = process.env.GHL_PRIVATE_TOKEN ?? '';
@@ -24,6 +25,9 @@ async function tryFetch(label: string, url: string, token: string) {
 }
 
 export async function GET() {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const results = await Promise.all([
     tryFetch('convs-all', `${V2}/conversations/search?locationId=${LOCATION_ID}&limit=5`, PRIVATE_TOKEN),
     tryFetch('convs-unread', `${V2}/conversations/search?locationId=${LOCATION_ID}&unreadOnly=true&limit=5`, PRIVATE_TOKEN),

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getLastRun } from '@/lib/mindbody/sync-state';
-import { getCurrentUser } from '@/lib/auth/profile';
+import { requireUser } from '@/lib/auth/api-guard';
 import { computeMindBodyInsights } from '@/lib/dashboard/insights';
 import { emailAccountFor } from '@/lib/email/imap';
 import { isOAuthConnected } from '@/lib/email/gmail-oauth';
@@ -24,13 +24,12 @@ type BriefRow = {
 };
 
 export async function GET() {
-  // The proxy's matcher excludes /api, so this route is NOT covered by the
-  // page auth gate — without this check it hands member names, risk bands, AI
-  // notes and both brief bodies to anyone who knows the URL.
-  const me = await getCurrentUser();
-  if (!me) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // The proxy now requires a session on /api as well. This check stays so a
+  // future matcher change cannot hand member names, risk bands, AI notes and
+  // both brief bodies to anyone who knows the URL.
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+  const me = auth.user;
   // Content is scoped per profile, not just per page. The dashboard is the one
   // page everyone can reach (ALWAYS_ALLOWED, so nobody redirect-loops), which
   // means anything sensitive rendered on it has to be gated HERE — otherwise

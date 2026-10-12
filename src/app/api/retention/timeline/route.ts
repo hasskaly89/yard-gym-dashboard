@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireUser } from '@/lib/auth/api-guard';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 // One member's history as a single dated feed — Recovr's Timeline tab.
@@ -55,11 +56,10 @@ const VISIT_TITLE: Record<string, string> = {
 };
 
 export async function GET(request: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
+
   const session = await createClient();
-  const { data: userData } = await session.auth.getUser();
-  if (!userData.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
 
   const memberId = new URL(request.url).searchParams.get('memberId');
   if (!memberId) {

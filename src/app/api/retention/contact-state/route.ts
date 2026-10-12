@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { requireUser } from '@/lib/auth/api-guard';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { displayNameForEmail } from '@/lib/retention/users';
 
@@ -37,12 +38,10 @@ export type ContactStateResponse = {
 };
 
 export async function GET() {
-  const supabase = await createClient();
+  const auth = await requireUser();
+  if (!auth.ok) return auth.response;
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const supabase = await createClient();
 
   const sinceIso = new Date(Date.now() - 30 * 86400000).toISOString();
 
@@ -116,7 +115,7 @@ export async function GET() {
     snoozes,
     assignments,
     assignees,
-    currentUserId: userData.user.id,
+    currentUserId: auth.user.id,
   };
   return NextResponse.json(body);
 }
